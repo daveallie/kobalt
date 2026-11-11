@@ -80,7 +80,7 @@ void write(const QString &path, const QByteArray &data)
 
 void sandboxLibraries()
 {
-    LuaPlugin plugin(manifest(fixture("sandbox")), { });
+    LuaPlugin plugin(manifest(fixture("sandbox")), {});
     loaded(plugin);
     require(askHtml(plugin, "word") == "ok", "The sandbox fixture did not answer");
 }
@@ -98,7 +98,7 @@ void readFileStaysInFolder()
     write(temporary.path() + "/plugin-sibling.txt", "sibling");
     require(QFile::link(temporary.path() + "/x", folder + "/escape.txt"), "No symlink");
 
-    LuaPlugin plugin(manifest(folder), { });
+    LuaPlugin plugin(manifest(folder), {});
     loaded(plugin);
     require(askHtml(plugin, "data.txt") == "Plugin data\n", "read_file did not read a plugin file");
     require(askHtml(plugin, "../x") == "<nil>", "read_file left the folder through ..");
@@ -137,21 +137,21 @@ void readSidecar()
     loaded(disabled);
     require(askHtml(disabled, "xray.json") == "<nil>", "Sidecars were read while disabled");
 
-    LuaPlugin bookless(manifest(fixture("sidecar")), { });
+    LuaPlugin bookless(manifest(fixture("sidecar")), {});
     loaded(bookless);
     require(askHtml(bookless, "xray.json") == "<nil>", "A sidecar was read without a book");
 }
 
 void jsonDecode()
 {
-    LuaPlugin plugin(manifest(fixture("json")), { });
+    LuaPlugin plugin(manifest(fixture("json")), {});
     loaded(plugin);
     require(askHtml(plugin, "word") == "ok", "The JSON fixture did not answer");
 }
 
 void budgetAbort()
 {
-    LuaPlugin plugin(manifest(fixture("budget")), { });
+    LuaPlugin plugin(manifest(fixture("budget")), {});
     loaded(plugin);
     QElapsedTimer timer;
     timer.start();
@@ -163,7 +163,7 @@ void budgetAbort()
     require(error.contains("budget"), "The error does not mention the budget");
 
     // The budget is per call, so a later call can still run.
-    LuaPlugin small(manifest(fixture("budget")), { }, 10'000);
+    LuaPlugin small(manifest(fixture("budget")), {}, 10'000);
     loaded(small);
     ask(small, "word", &ok, &error);
     require(!ok && error.contains("budget"), "A small budget did not stop the loop");
@@ -177,7 +177,7 @@ void budgetCoversLoad()
             "The manifest was not copied");
     write(temporary.path() + "/main.lua",
           "while true do pcall(function() while true do end end) end\n");
-    LuaPlugin plugin(manifest(temporary.path()), { });
+    LuaPlugin plugin(manifest(temporary.path()), {});
     QString error;
     require(!plugin.load(&error), "An endless main.lua loaded");
     require(error.contains("budget"), "The load error does not mention the budget");
@@ -185,7 +185,7 @@ void budgetCoversLoad()
 
 void errorIsFailure()
 {
-    LuaPlugin plugin(manifest(fixture("error")), { });
+    LuaPlugin plugin(manifest(fixture("error")), {});
     loaded(plugin);
     bool ok = true;
     QString error;
@@ -197,7 +197,7 @@ void errorIsFailure()
 
 void malformedCardIsFailure()
 {
-    LuaPlugin plugin(manifest(fixture("malformed")), { });
+    LuaPlugin plugin(manifest(fixture("malformed")), {});
     loaded(plugin);
     for (const char *reply : { "text", "empty", "untitled", "blank", "number" }) {
         bool ok = true;
@@ -211,7 +211,7 @@ void malformedCardIsFailure()
 
 void nilIsNoCard()
 {
-    LuaPlugin plugin(manifest(fixture("nil_card")), { });
+    LuaPlugin plugin(manifest(fixture("nil_card")), {});
     loaded(plugin);
     bool ok = false;
     const auto card = ask(plugin, "word", &ok);
@@ -220,13 +220,13 @@ void nilIsNoCard()
 
 void missingHooksSucceed()
 {
-    LuaPlugin plugin(manifest(fixture("nil_card")), { });
+    LuaPlugin plugin(manifest(fixture("nil_card")), {});
     loaded(plugin);
     QString error;
     require(plugin.bookOpened(book(), &error), "A missing book_opened failed");
     require(plugin.bookClosed(&error), "A missing book_closed failed");
 
-    LuaPlugin unloaded(manifest(fixture("nil_card")), { });
+    LuaPlugin unloaded(manifest(fixture("nil_card")), {});
     bool ok = true;
     ask(unloaded, "word", &ok, &error);
     require(!ok, "A plugin that did not load answered");
@@ -234,7 +234,7 @@ void missingHooksSucceed()
 
 void utf8RoundTrip()
 {
-    LuaPlugin plugin(manifest(fixture("echo")), { });
+    LuaPlugin plugin(manifest(fixture("echo")), {});
     loaded(plugin);
     const QString word = QString::fromUtf8("Zo\xc3\xab\xe2\x80\x99s");
     bool ok = false;
@@ -245,7 +245,7 @@ void utf8RoundTrip()
 
 void ctxShape()
 {
-    LuaPlugin plugin(manifest(fixture("echo")), { });
+    LuaPlugin plugin(manifest(fixture("echo")), {});
     loaded(plugin);
     require(askHtml(plugin, "word") == "Wolf Hall|en|41.5|12|300|Part One|nil",
             "Lua did not see the lookup context");
@@ -259,7 +259,7 @@ void ctxShape()
 void memoryCap()
 {
     require(defaultMemoryCap == 32 * 1024 * 1024, "The default memory cap is not 32 MiB");
-    LuaPlugin plugin(manifest(fixture("memory_cap")), { }, defaultInstructionBudget, 1024 * 1024);
+    LuaPlugin plugin(manifest(fixture("memory_cap")), {}, defaultInstructionBudget, 1024 * 1024);
     loaded(plugin);
     bool ok = true;
     QString error;
@@ -274,7 +274,7 @@ void memoryCap()
 void finalizerRejected()
 {
     {
-        LuaPlugin plugin(manifest(fixture("finalizer")), { });
+        LuaPlugin plugin(manifest(fixture("finalizer")), {});
         loaded(plugin);
         require(askHtml(plugin, "word") == "indexed", "An ordinary metatable was rejected");
         bool ok = true;
@@ -289,7 +289,7 @@ void finalizerRejected()
 
 void patternSteps()
 {
-    LuaPlugin plugin(manifest(fixture("pattern")), { });
+    LuaPlugin plugin(manifest(fixture("pattern")), {});
     loaded(plugin);
     require(askHtml(plugin, "word") == "200000", "An ordinary long gsub failed");
     QElapsedTimer timer;

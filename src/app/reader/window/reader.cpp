@@ -1934,7 +1934,7 @@ void Reader::lookupSelection()
                 kobalt::qt::later(reader->services.pluginLookupTimeoutMs, reader,
                                   [guard, epoch, timing] {
                                       if (guard)
-                                          guard->finishPluginLookup(epoch, { }, timing);
+                                          guard->finishPluginLookup(epoch, {}, timing);
                                   });
             },
             true);

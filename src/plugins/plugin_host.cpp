@@ -108,7 +108,7 @@ Card PluginHost::Worker::lookup(const Lookup &lookup)
 {
     for (auto &entry : plugins) {
         if (stopped())
-            return { };
+            return {};
         if (entry.failures >= failureLimit)
             continue;
         Card card;
@@ -120,7 +120,7 @@ Card PluginHost::Worker::lookup(const Lookup &lookup)
         if (!card.isEmpty())
             return card;
     }
-    return { };
+    return {};
 }
 
 void PluginHost::Worker::close()

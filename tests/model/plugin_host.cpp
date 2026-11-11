@@ -258,7 +258,7 @@ int main(int argc, char **argv)
     destroyWhileRunning(events);
     replyOnMainThread();
 
-    setDiagnosticObserver({ });
+    setDiagnosticObserver({});
     std::puts("PASS: plugin host order, fallthrough, discovery, failures, queueing, shutdown and "
               "reply thread");
 }

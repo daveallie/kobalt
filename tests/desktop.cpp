@@ -7007,7 +7007,7 @@ printf '[{"file":"%s.png","scene":"%s"}]' "$3" "$KOBALT_GALLERY_CAPTURE" > "$2/p
     {
         QCOMPARE(ReaderHostServices().pluginLookupTimeoutMs, 300);
         QCOMPARE(ReaderHostServices().pluginDirectory, QString());
-        Fixture fixture(false, false, false, true, false, false, pluginServices({ }));
+        Fixture fixture(false, false, false, true, false, false, pluginServices({}));
         openPluginBook(fixture);
         auto *page = static_cast<ReadingPage *>(fixture.widget("rrPage"));
         QVERIFY(fixture.selectWord(page, fixture.wordPoint()));
