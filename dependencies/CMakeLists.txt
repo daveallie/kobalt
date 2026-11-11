@@ -140,6 +140,7 @@ if(APPLE OR (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
     set(engine_options NATIVE_ENGINE)
 endif()
 kobalt_source(crengine ${engine_options} PATCHES ${engine_patches})
+kobalt_source(lua PATCHES "${CMAKE_CURRENT_SOURCE_DIR}/patches/lua-cmake.patch")
 
 # Android builds pinned libpng. The Mac reuses libpng from its Qt SDK and Kobo
 # from its prepared SDK, so Kobo keeps the same libpng ABI as Qt; cache.cmake
@@ -170,6 +171,7 @@ kobalt_library(libjpeg-turbo ARCHIVE libjpeg.a OPTIONS -DENABLE_SHARED=OFF -DENA
 kobalt_library(xxhash ARCHIVE libxxhash.a SUFFIX /cmake_unofficial OPTIONS -DXXHASH_BUILD_XXHSUM=OFF)
 kobalt_library(libunibreak AUTOTOOLS ARCHIVE libunibreak.a)
 kobalt_library(lunasvg ARCHIVE liblunasvg.a OPTIONS "-DXTENDED_DIR=${svg_patches}/xtended" -DLUNASVG_BUILD_EXAMPLES=OFF)
+kobalt_library(lua ARCHIVE liblua.a)
 kobalt_library(crengine NO_INSTALL ARCHIVE libcrengine.a DEPENDS dep-freetype dep-harfbuzz dep-fribidi
     dep-utf8proc dep-libjpeg-turbo dep-xxhash dep-libunibreak dep-lunasvg OPTIONS
     -DAUTO=OFF -DFREETYPE=ON -DHARFBUZZ=ON -DLIBPNG=ON -DLIBJPEG=ON -DGIF=ON -DLUNASVG=ON

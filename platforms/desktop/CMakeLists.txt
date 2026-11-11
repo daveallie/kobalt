@@ -103,7 +103,7 @@ target_link_libraries(kobalt-core PUBLIC Qt6::Widgets Qt6::Network Qt6::Sql
     "${KOBALT_TEST_DEPENDENCIES}/lib/libutf8proc.a" "${KOBALT_TEST_DEPENDENCIES}/lib/libjpeg.a"
     "${KOBALT_TEST_DEPENDENCIES}/lib/liblunasvg.a" "${KOBALT_TEST_DEPENDENCIES}/lib/libfreetype.a"
     "${KOBALT_TEST_DEPENDENCIES}/lib/libfribidi.a" "${KOBALT_TEST_DEPENDENCIES}/lib/libunibreak.a"
-    "${KOBALT_TEST_PNG}" z)
+    "${KOBALT_TEST_DEPENDENCIES}/lib/liblua.a" "${KOBALT_TEST_PNG}" z)
 # The engine and Qt must keep separate FreeType glyph implementations.
 if(APPLE)
     target_link_options(kobalt-core INTERFACE "LINKER:-force_load,${KOBALT_TEST_DEPENDENCIES}/lib/libfreetype.a")
@@ -689,7 +689,7 @@ if(BUILD_TESTING)
         layout_cache resource_cache layout_compatibility reading_pace reading_speed engine_activity
         local_resources zip_resource diagnostics crash_reports dictionary_store image_damage page_pixels
         logical_word_counter brightness_gesture qt_compat page_refresh_regions screen_refresh plain_archive reading_progress
-        library kosync sync_coordinator annotation_draft chapter_progress style_sample_cache preview_store save_wait saved_words)
+        library kosync sync_coordinator annotation_draft chapter_progress style_sample_cache preview_store save_wait saved_words lua_runtime)
     kobalt_regressions(model font_axes touch_rotation)
     kobalt_regressions(platform reader_orientation font_sources system_fonts nickel_dictionary_selection
         nickel_reading_pace_cache nickel_reading_save nickel_event_save nickel_account nickel_session_calls nickel_session_volume nickel_book_menu nickel_font_scale native_progress native_sync_network native_dialog_overlay native_lifecycle standby_input standby_diagnostics usb_removal page_transition_native page_animation)
@@ -740,7 +740,7 @@ if(BUILD_TESTING)
         "settings:^(desktop\\.(settings.*|lightDarkModeShortcut)|lifecycle\\.(appearance.*|uneditedPanelTransitions|overflowClosesCurrentPanel|turnSkipsHiddenControls)|model\\.(appearance-settings|text-presets|style-sample-cache|preview-store)|component\\.(ui|acknowledgments)|ui\\.(openingCoverDisabled|regularIconWeight|connectedModalFooter|modalListDividers|modalClosesOnBackdropOnly|choiceSheetListFillsCard))$"
         "layout:^(engine\\..*|corpus\\..*|desktop\\.(columns|globalLayout|advancedText|verticalJustification|stylesheet)|model\\.layout-(cache|compatibility))$"
         "reading:^(desktop\\.(startup|reading|errors|features)|ui\\.openingCover(Layout|Upgrade|Disabled)|session\\.reader-session|model\\.(local-resources|zip-resource|resource-cache|plain-archive))$"
-        "build:^build\\..*$")
+        "build:^(build\\..*|model\\.lua-runtime)$")
     get_property(registered_tests DIRECTORY PROPERTY TESTS)
     foreach(test IN LISTS registered_tests)
         set(test_area)

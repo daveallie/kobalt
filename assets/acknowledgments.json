@@ -47,6 +47,17 @@
     ]
   },
   {
+    "group": "kobalt",
+    "name": "Lua",
+    "version": "5.4.9",
+    "description": "Scripting for sandboxed plugins. Copyright Lua.org, PUC-Rio.",
+    "license": "MIT",
+    "url": "https://www.lua.org",
+    "notices": [
+      "Lua-MIT"
+    ]
+  },
+  {
     "group": "engine",
     "name": "SQLite",
     "version": "Android Qt plugin 3.53.4; device or SDK library on other targets",
