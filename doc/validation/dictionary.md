@@ -8,6 +8,8 @@ These checks cover word lookup, dictionary editing, dictionary book search, down
 
 The `desktop.plugin*` checks point the reader at fixture Lua plugins in `tests/fixtures/plugins/reader/`. They cover a plugin card in the dictionary sheet and its dictionary cell, a plugin with no card, a failing plugin, a plugin that misses its deadline, a card that arrives after a tap dismissed the pending lookup, and a lookup cancelled by suspension. The deadline check shortens the 300 ms plugin deadline to 1 ms. The late-card and suspension checks act at the moment the reader posts the request, so the reply always arrives afterwards. `model.lua-runtime`, `model.plugin-runtime`, `model.plugin-host` and `model.plugin-position` check the Lua sandbox, the plugin thread and the reading position that plugins receive.
 
+The `dictionary-plugin-card` gallery scene captures a plugin card next to the `dictionary-definition` scene in the same sheet. Capture it with `KOBALT_GALLERY_CASE=dictionary` until a full gallery has indexed it.
+
 These checks use a controlled keyboard. They do not establish physical Kobo or Android keyboard and touch behavior.
 
 `model.dictionary-store` also checks selected-folder StarDict preparation, lookup, stable IDs, missing source files and coexistence with downloaded dictionaries. Index generation uses only the private working copy. Invalid dictionaries are omitted from the folder catalogue.

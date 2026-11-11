@@ -5,6 +5,8 @@
 
 If the page or text layout changes during a hold, Kobalt discards the old lookup target. The long hold does not turn a page or open the reading menu; release and hold the word on the new page. A decoded image that leaves the text layout unchanged preserves the hold and any word selection already in progress. Short taps and swipes keep their normal navigation behavior during page updates. Cancelling the contact prevents later lookup and navigation from it.
 
+A [Lua plugin](../plugins.md) can answer a lookup first. Its card opens in the dictionary sheet in place of the definition, and the book button in its header closes the card and opens the dictionary for the same word. If no plugin answers within 300 ms, the dictionary opens as usual.
+
 ## Downloaded dictionaries
 
 Dictionary downloads are disabled on Kobo, and its settings omit the Lookup tab. Kobo lookup uses Nickel's installed dictionaries, including dictionaries in `.kobo/custom-dict`. Standard and custom dictionaries remain separate choices when they share a language suffix. Custom choices keep Nickel's custom label and are saved by file path, so installing or removing the standard dictionary does not change the selected custom dictionary. Lookup uses the installed entry shown in the selector even when Nickel lists an uninstalled standard dictionary with the same language suffix. The Kobo reader does not start the download manager or use dictionaries previously downloaded through Kobalt.

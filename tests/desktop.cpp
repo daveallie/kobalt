@@ -14896,6 +14896,16 @@ private slots:
         panel->open("type", result, { 100, 100, 50, 40 });
         QTRY_VERIFY(panel->isVisible());
         QVERIFY(capture(fixture, name + "-definition"));
+        panel->openCard("Maren",
+                        { "Maren Holt",
+                          "<p>Harbourmaster of Grey Quay.</p><h4>Relationships</h4><p>Corin Holt "
+                          "\u2014 Estranged brother</p><p><b>Last seen:</b> Ch. 4</p>",
+                          "X-Ray \u00b7 revealed up to 18%" },
+                        { 100, 100, 50, 40 });
+        QTRY_VERIFY(panel->isVisible());
+        QVERIFY(capture(fixture, name + "-plugin-card"));
+        panel->open("type", result, { 100, 100, 50, 40 });
+        QTRY_VERIFY(panel->isVisible());
         QVERIFY(fixture.lookupAction("rrDictionaryEdit", "rrDictionaryMenuEdit"));
         QVERIFY(capture(fixture, name + "-edit"));
         QVERIFY(fixture.press("rrDictionaryClose"));

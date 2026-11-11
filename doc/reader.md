@@ -15,6 +15,7 @@ This document describes what Kobalt does on a device today: which builds exist, 
 | [Settings](reader/settings.md) | Settings tabs and sections, Light and brightness |
 | [Bookmarks and annotations](reader/annotations.md) | Bookmarks, highlights and the annotation list |
 | [Dictionaries](reader/dictionaries.md) | Lookup and downloaded dictionaries |
+| [Lua plugins](plugins.md) | Plugin folders, hooks, the `kobalt` API and limits |
 | [Image viewer](reader/image-viewer.md) | The image viewer |
 | [Viewport and rotation](reader/viewport.md) | Viewport transitions and layout reuse when rotating |
 | [Display refresh](reader/display.md) | Refresh policies, page animations and the time remaining format |
