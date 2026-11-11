@@ -305,8 +305,8 @@ void memoryCap()
             "Many empty arrays were decoded past the memory cap");
     require(askHtml(plugin, "word") == "ok", "The plugin did not recover after large JSON");
 
-    LuaPlugin stopping(manifest(fixture("memory_cap")), { });
     std::atomic_bool abort{ false };
+    LuaPlugin stopping(manifest(fixture("memory_cap")), { });
     stopping.setAbort(&abort);
     loaded(stopping);
     require(askHtml(stopping, "big") == "4000000", "A large allocation failed while running");
@@ -417,6 +417,35 @@ void logRateLimit()
     kobalt::setDiagnosticObserver({ });
 }
 
+void stopUnwindsQuickly()
+{
+    std::atomic_bool abort{ false };
+    LuaPlugin plugin(manifest(fixture("stop")), { });
+    plugin.setAbort(&abort);
+    loaded(plugin);
+    QElapsedTimer timer;
+    kobalt::setDiagnosticObserver([&](const QJsonObject &event) {
+        if (event.value("message").toString().endsWith("ready")) {
+            abort = true;
+            timer.start();
+        }
+    });
+    bool ok = true;
+    QString error;
+    ask(plugin, "word", &ok, &error);
+    const qint64 elapsed = timer.isValid() ? timer.elapsed() : -1;
+    kobalt::setDiagnosticObserver({ });
+    if (elapsed < 0)
+        std::fprintf(stderr, "%s\n", qPrintable(error));
+    require(elapsed >= 0, "The stop fixture never became ready");
+    if (!error.contains("was stopped"))
+        std::fprintf(stderr, "%s\n", qPrintable(error));
+    require(!ok && error.contains("was stopped"), "A stopped hook did not report the stop");
+    if (elapsed >= 500)
+        std::fprintf(stderr, "Unwinding took %lld ms\n", elapsed);
+    require(elapsed < 500, "Unwinding a stopped hook took half a second or more");
+}
+
 void manifestValidation()
 {
     const auto valid = manifest(fixture("echo"));
@@ -474,6 +503,7 @@ int main(int argc, char **argv)
     cLibraryLimits();
     cardLimits();
     logRateLimit();
+    stopUnwindsQuickly();
     manifestValidation();
     puts("PASS: Lua plugins run in a sandbox");
 }

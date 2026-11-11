@@ -47,7 +47,7 @@ public:
     bool answersLookups();
     const Manifest &manifest() const;
     // While *abort is true, a running hook stops at its next budget check and
-    // cannot grow its memory, so it fails.
+    // cannot make allocations larger than 64 KiB, so it fails.
     void setAbort(const std::atomic_bool *abort);
 
     struct Memory

@@ -23,6 +23,7 @@ constexpr int logLines = 20;
 constexpr qint64 sourceLimit = 1024 * 1024;
 constexpr int titleLimit = 200;
 constexpr std::size_t htmlLimit = 64 * 1024;
+constexpr std::size_t stoppedGrowth = 64 * 1024;
 
 QString text(lua_State *state, int index)
 {
@@ -276,10 +277,12 @@ void *LuaPlugin::allocate(void *memory, void *block, std::size_t oldSize, std::s
         usage->used -= oldSize;
         return nullptr;
     }
-    // One instruction can copy up to the cap, so a stopped plugin may not grow at all.
+    // One instruction can copy up to the cap, so a stopped plugin may not grow by much.
+    // Small growth stays, because raising the stop error and unwinding allocate.
     if (usage->enforce && newSize > oldSize
         && (usage->used - oldSize + newSize > usage->cap
-            || (usage->abort && usage->abort->load(std::memory_order_relaxed))))
+            || (newSize - oldSize > stoppedGrowth && usage->abort
+                && usage->abort->load(std::memory_order_relaxed))))
         return nullptr;
     void *result = std::realloc(block, newSize);
     if (result)
