@@ -9,5 +9,10 @@ function before_lookup(ctx)
         local value, message = kobalt.json.decode("[" .. string.rep("1,", 200000) .. "1]")
         return { title = "json", html = value and "decoded" or message }
     end
+    if ctx.word == "arrays" then
+        -- Three bytes of text become a whole table each.
+        local value, message = kobalt.json.decode("[" .. string.rep("[],", 40000) .. "[]]")
+        return { title = "json", html = value and "decoded" or message }
+    end
     return { title = "ok", html = "ok" }
 end

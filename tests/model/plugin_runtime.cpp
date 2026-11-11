@@ -1,10 +1,14 @@
 #include "plugins/lua_plugin.h"
 
 #include "check.h"
+#include "support/diagnostics.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QJsonObject>
+#include <QStringList>
 #include <QTemporaryDir>
 
 using namespace kobalt::plugins;
@@ -109,6 +113,13 @@ void readFileStaysInFolder()
     require(askHtml(plugin, "escape.txt") == "<nil>", "read_file followed a symlink out");
     require(askHtml(plugin, "missing.txt") == "<nil>", "read_file returned a missing file");
     require(askHtml(plugin, ".") == "<nil>", "read_file returned the folder itself");
+
+    write(folder + "/large.txt", QByteArray(2 * 1024 * 1024, 'x'));
+    LuaPlugin small(manifest(folder), { }, defaultInstructionBudget, 1024 * 1024);
+    loaded(small);
+    require(askHtml(small, "large.txt").contains("memory limit"),
+            "read_file returned a file larger than the memory left");
+    require(askHtml(small, "data.txt") == "Plugin data\n", "read_file failed after a large file");
 }
 
 void readSidecar()
@@ -140,6 +151,12 @@ void readSidecar()
     LuaPlugin bookless(manifest(fixture("sidecar")), {});
     loaded(bookless);
     require(askHtml(bookless, "xray.json") == "<nil>", "A sidecar was read without a book");
+
+    write(temporary.path() + "/Book.large.json", QByteArray(2 * 1024 * 1024, ' '));
+    LuaPlugin small(manifest(fixture("sidecar")), context, defaultInstructionBudget, 1024 * 1024);
+    loaded(small);
+    require(askHtml(small, "large.json").contains("memory limit"),
+            "read_sidecar returned a file larger than the memory left");
 }
 
 void jsonDecode()
@@ -181,6 +198,21 @@ void budgetCoversLoad()
     QString error;
     require(!plugin.load(&error), "An endless main.lua loaded");
     require(error.contains("budget"), "The load error does not mention the budget");
+}
+
+void mainLuaLimit()
+{
+    QTemporaryDir temporary;
+    require(temporary.isValid(), "No temporary folder");
+    require(QFile::copy(fixture("budget/plugin.json"), temporary.path() + "/plugin.json"),
+            "The manifest was not copied");
+    QByteArray source = "function before_lookup() return nil end\n";
+    source += QByteArray(1024 * 1024, '-');
+    write(temporary.path() + "/main.lua", source);
+    LuaPlugin plugin(manifest(temporary.path()), { });
+    QString error;
+    require(!plugin.load(&error), "A main.lua over 1 MiB loaded");
+    require(error.contains("1 MiB"), "The load error does not name the size limit");
 }
 
 void errorIsFailure()
@@ -269,6 +301,9 @@ void memoryCap()
     require(askHtml(plugin, "word") == "ok", "The plugin did not recover after the memory error");
     require(askHtml(plugin, "json").contains("memory limit"),
             "Large JSON was decoded past the memory cap");
+    require(askHtml(plugin, "arrays").contains("memory limit"),
+            "Many empty arrays were decoded past the memory cap");
+    require(askHtml(plugin, "word") == "ok", "The plugin did not recover after large JSON");
 }
 
 void finalizerRejected()
@@ -309,6 +344,65 @@ void patternSteps()
     require(timer.elapsed() < 1000, "The unanchored scan was not stopped within a second");
 }
 
+void cLibraryLimits()
+{
+    LuaPlugin plugin(manifest(fixture("c_limits")), { });
+    loaded(plugin);
+    QElapsedTimer timer;
+    timer.start();
+    require(askHtml(plugin, "rep") == "[]", "An empty string.rep did not return at once");
+    require(timer.elapsed() < 1000, "An empty string.rep took more than a second");
+    for (const char *call : { "move", "find", "insert", "concat", "sort" }) {
+        timer.restart();
+        bool ok = true;
+        QString error;
+        const auto card = ask(plugin, call, &ok, &error);
+        if (ok)
+            std::fprintf(stderr, "Call %s finished\n", call);
+        require(!ok && card.isEmpty(), "A long C library call did not fail");
+        if (timer.elapsed() >= 1000)
+            std::fprintf(stderr, "Call %s took %lld ms\n", call, qint64(timer.elapsed()));
+        require(timer.elapsed() < 1000, "A long C library call was not stopped within a second");
+    }
+    require(askHtml(plugin, "word") == "200001", "An ordinary plain find failed");
+}
+
+void cardLimits()
+{
+    LuaPlugin plugin(manifest(fixture("card_limits")), { });
+    loaded(plugin);
+    bool ok = false;
+    const auto largest = ask(plugin, "largest", &ok);
+    require(ok && largest.title.size() == 200 && largest.html.size() == 64 * 1024
+                    && largest.footer.size() == 200,
+            "A card at its size limits was refused");
+    for (const char *reply : { "title", "footer", "html" }) {
+        QString error;
+        const auto card = ask(plugin, reply, &ok, &error);
+        require(!ok && card.isEmpty() && error.contains("size limits"),
+                "A card past its size limits was accepted");
+    }
+}
+
+void logRateLimit()
+{
+    QStringList lines;
+    kobalt::setDiagnosticObserver([&](const QJsonObject &event) {
+        if (event.value("event").toString() == "plugin-log")
+            lines.append(event.value("message").toString());
+    });
+    LuaPlugin plugin(manifest(fixture("log")), { });
+    loaded(plugin);
+    for (int call = 0; call < 2; ++call) {
+        lines.clear();
+        require(askHtml(plugin, "word") == "ok", "The log fixture did not answer");
+        require(lines.size() == 21, "A hook call did not log 20 lines and one notice");
+        require(lines.at(19).endsWith("line 20") && lines.at(20).endsWith("suppressed"),
+                "The log notice is missing or out of place");
+    }
+    kobalt::setDiagnosticObserver({ });
+}
+
 void manifestValidation()
 {
     const auto valid = manifest(fixture("echo"));
@@ -327,14 +421,18 @@ void manifestValidation()
 }
 } // namespace
 
-int main()
+int main(int argc, char **argv)
 {
+    QCoreApplication app(argc, argv);
+    QTemporaryDir logs;
+    kobalt::initializeDiagnostics(logs.path(), false);
     sandboxLibraries();
     readFileStaysInFolder();
     readSidecar();
     jsonDecode();
     budgetAbort();
     budgetCoversLoad();
+    mainLuaLimit();
     errorIsFailure();
     malformedCardIsFailure();
     nilIsNoCard();
@@ -344,6 +442,9 @@ int main()
     memoryCap();
     finalizerRejected();
     patternSteps();
+    cLibraryLimits();
+    cardLimits();
+    logRateLimit();
     manifestValidation();
     puts("PASS: Lua plugins run in a sandbox");
 }

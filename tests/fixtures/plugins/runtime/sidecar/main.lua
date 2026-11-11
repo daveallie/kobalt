@@ -1,3 +1,4 @@
 function before_lookup(ctx)
-    return { title = "sidecar", html = kobalt.read_sidecar(ctx.word) or "<nil>" }
+    local data, message = kobalt.read_sidecar(ctx.word)
+    return { title = "sidecar", html = data or message or "<nil>" }
 end

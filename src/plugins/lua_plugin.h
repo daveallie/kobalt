@@ -43,15 +43,32 @@ public:
     bool bookClosed(QString *error);
     // false = failure (error/budget/memory/bad type); true with an empty card = no card
     bool beforeLookup(const Lookup &lookup, const Book &book, Card *card, QString *error);
+    // True when main.lua defined before_lookup.
+    bool answersLookups();
     const Manifest &manifest() const;
     // While *abort is true, a running hook stops at its next budget check and fails.
     void setAbort(const std::atomic_bool *abort);
 
-private:
     struct Memory
     {
         std::size_t used = 0, cap = 0;
         bool enforce = false;
+    };
+
+private:
+    // Lets host pushes pass the cap, because a Lua memory error there would
+    // unwind past C++ destructors. Callers check sizes first.
+    class Unenforced
+    {
+    public:
+        explicit Unenforced(lua_State *state);
+        ~Unenforced();
+        Unenforced(const Unenforced &) = delete;
+        Unenforced &operator=(const Unenforced &) = delete;
+
+    private:
+        Memory &memory;
+        bool enforced;
     };
 
     bool pushHook(const char *name);
@@ -72,6 +89,7 @@ private:
     QString root;
     int tickLimit;
     int ticks = 0;
+    int logs = 0;
     const std::atomic_bool *abort = nullptr;
     Memory memory;
     lua_State *state = nullptr;

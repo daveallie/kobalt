@@ -141,7 +141,8 @@ if(APPLE OR (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
 endif()
 kobalt_source(crengine ${engine_options} PATCHES ${engine_patches})
 kobalt_source(lua PATCHES "${CMAKE_CURRENT_SOURCE_DIR}/patches/lua-cmake.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/patches/lua-match-steps.patch")
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/lua-match-steps.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/patches/lua-c-budget.patch")
 
 # Android builds pinned libpng. The Mac reuses libpng from its Qt SDK and Kobo
 # from its prepared SDK, so Kobo keeps the same libpng ABI as Qt; cache.cmake

@@ -19,6 +19,10 @@ namespace kobalt::plugins {
 namespace {
 constexpr int hookInterval = 1000;
 constexpr int logLimit = 1000;
+constexpr int logLines = 20;
+constexpr qint64 sourceLimit = 1024 * 1024;
+constexpr int titleLimit = 200;
+constexpr std::size_t htmlLimit = 64 * 1024;
 
 QString text(lua_State *state, int index)
 {
@@ -46,43 +50,52 @@ void pushBook(lua_State *state, const Book &book)
     setField(state, "language", book.language);
 }
 
-bool readBytes(const QString &path, QByteArray *data)
+enum class Read { Ok, Missing, TooLarge };
+
+// Checks the size first, so that a huge file is never read.
+Read readBytes(const QString &path, qint64 limit, QByteArray *data)
 {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))
-        return false;
-    *data = file.readAll();
-    return true;
+        return Read::Missing;
+    const qint64 size = file.size();
+    if (size > limit)
+        return Read::TooLarge;
+    *data = file.read(size);
+    return Read::Ok;
 }
 
-bool pushJson(lua_State *state, const QJsonValue &value, int depth);
+using Memory = LuaPlugin::Memory;
 
-bool pushJsonObject(lua_State *state, const QJsonObject &object, int depth)
+bool pushJson(lua_State *state, const QJsonValue &value, int depth, const Memory &memory);
+
+bool pushJsonObject(lua_State *state, const QJsonObject &object, int depth, const Memory &memory)
 {
     lua_createtable(state, 0, int(object.size()));
     for (auto it = object.begin(); it != object.end(); ++it) {
         push(state, it.key());
-        if (!pushJson(state, it.value(), depth + 1))
+        if (!pushJson(state, it.value(), depth + 1, memory))
             return false;
         lua_rawset(state, -3);
     }
     return true;
 }
 
-bool pushJsonArray(lua_State *state, const QJsonArray &array, int depth)
+bool pushJsonArray(lua_State *state, const QJsonArray &array, int depth, const Memory &memory)
 {
     lua_createtable(state, int(array.size()), 0);
     for (int i = 0; i < array.size(); ++i) {
-        if (!pushJson(state, array.at(i), depth + 1))
+        if (!pushJson(state, array.at(i), depth + 1, memory))
             return false;
         lua_rawseti(state, -2, i + 1);
     }
     return true;
 }
 
-bool pushJson(lua_State *state, const QJsonValue &value, int depth)
+// Stops as soon as the tables pass the cap, because their size is not the text's.
+bool pushJson(lua_State *state, const QJsonValue &value, int depth, const Memory &memory)
 {
-    if (!lua_checkstack(state, 4) || depth > 512)
+    if (memory.used > memory.cap || !lua_checkstack(state, 4) || depth > 512)
         return false;
     switch (value.type()) {
     case QJsonValue::Bool:
@@ -100,9 +113,9 @@ bool pushJson(lua_State *state, const QJsonValue &value, int depth)
         push(state, value.toString());
         return true;
     case QJsonValue::Array:
-        return pushJsonArray(state, value.toArray(), depth);
+        return pushJsonArray(state, value.toArray(), depth, memory);
     case QJsonValue::Object:
-        return pushJsonObject(state, value.toObject(), depth);
+        return pushJsonObject(state, value.toObject(), depth, memory);
     default:
         lua_pushnil(state);
         return true;
@@ -176,8 +189,11 @@ bool readManifest(const QString &directory, Manifest *out, QString *error)
     const QDir folder(directory);
     const QString manifestPath = folder.filePath(QStringLiteral("plugin.json"));
     QByteArray data;
-    if (!readBytes(manifestPath, &data)) {
-        *error = QStringLiteral("cannot read ") + manifestPath;
+    const Read read = readBytes(manifestPath, sourceLimit, &data);
+    if (read != Read::Ok) {
+        *error = (read == Read::TooLarge ? QStringLiteral("too large: ")
+                                         : QStringLiteral("cannot read "))
+                + manifestPath;
         return false;
     }
     QJsonParseError parse;
@@ -273,25 +289,33 @@ std::size_t LuaPlugin::memoryLeft(lua_State *state)
     return usage.used < usage.cap ? usage.cap - usage.used : 0;
 }
 
-// Host pushes run uncapped after a size check, because a Lua memory error here
-// would unwind past C++ destructors.
+LuaPlugin::Unenforced::Unenforced(lua_State *state)
+    : memory(owner(state)->memory), enforced(memory.enforce)
+{
+    memory.enforce = false;
+}
+
+LuaPlugin::Unenforced::~Unenforced()
+{
+    memory.enforce = enforced;
+}
+
 int LuaPlugin::pushFile(lua_State *state, const QString &path)
 {
+    const Unenforced unenforced(state);
+    const std::size_t left = memoryLeft(state);
     QByteArray data;
-    if (!readBytes(path, &data)) {
+    const Read read = readBytes(path, left > 1024 ? qint64(left - 1024) : 0, &data);
+    if (read == Read::Missing) {
         lua_pushnil(state);
         return 1;
     }
-    if (std::size_t(data.size()) + 1024 > memoryLeft(state)) {
+    if (read == Read::TooLarge) {
         lua_pushnil(state);
         lua_pushliteral(state, "the file exceeds the plugin memory limit");
         return 2;
     }
-    Memory &usage = owner(state)->memory;
-    const bool enforced = usage.enforce;
-    usage.enforce = false;
     lua_pushlstring(state, data.constData(), size_t(data.size()));
-    usage.enforce = enforced;
     return 1;
 }
 
@@ -299,12 +323,13 @@ int LuaPlugin::jsonDecode(lua_State *state)
 {
     size_t length = 0;
     const char *data = luaL_checklstring(state, 1, &length);
-    if (length * 4 > memoryLeft(state)) {
+    const Unenforced unenforced(state);
+    Memory &usage = owner(state)->memory;
+    if (length > usage.cap / 8 || length * 4 > memoryLeft(state)) {
         lua_pushnil(state);
         lua_pushliteral(state, "JSON exceeds the plugin memory limit");
         return 2;
     }
-    Memory &usage = owner(state)->memory;
     bool decoded = false;
     {
         QJsonParseError parse;
@@ -323,11 +348,8 @@ int LuaPlugin::jsonDecode(lua_State *state)
             lua_pushliteral(state, "JSON must be an object or an array");
             return 2;
         }
-        const bool enforced = usage.enforce;
-        usage.enforce = false;
-        decoded = document.isArray() ? pushJsonArray(state, document.array(), 0)
-                                     : pushJsonObject(state, document.object(), 0);
-        usage.enforce = enforced;
+        decoded = document.isArray() ? pushJsonArray(state, document.array(), 0, usage)
+                                     : pushJsonObject(state, document.object(), 0, usage);
     }
     const bool fits = usage.used <= usage.cap;
     if (!decoded || !fits) {
@@ -400,9 +422,13 @@ int LuaPlugin::readSidecar(lua_State *state)
 int LuaPlugin::log(lua_State *state)
 {
     luaL_checkstring(state, 1);
-    const LuaPlugin *plugin = owner(state);
-    const QString message = QStringLiteral("plugin:") + plugin->pluginManifest.id + QLatin1Char(' ')
-            + text(state, 1).left(logLimit);
+    LuaPlugin *plugin = owner(state);
+    if (++plugin->logs > logLines + 1)
+        return 0;
+    const QString prefix = QStringLiteral("plugin:") + plugin->pluginManifest.id + QLatin1Char(' ');
+    const QString message = plugin->logs > logLines
+            ? prefix + QStringLiteral("further log lines suppressed")
+            : prefix + text(state, 1).left(logLimit);
     diagnostic("plugin-log", { { "message", message } }, DiagnosticSeverity::Activity);
     return 0;
 }
@@ -414,8 +440,11 @@ bool LuaPlugin::load(QString *error)
         return false;
     }
     QByteArray source;
-    if (!readBytes(QDir(pluginManifest.directory).filePath(QStringLiteral("main.lua")), &source)) {
-        *error = failure(QStringLiteral("cannot read main.lua"));
+    const Read read = readBytes(QDir(pluginManifest.directory).filePath(QStringLiteral("main.lua")),
+                                sourceLimit, &source);
+    if (read != Read::Ok) {
+        *error = failure(read == Read::TooLarge ? QStringLiteral("main.lua exceeds 1 MiB")
+                                                : QStringLiteral("cannot read main.lua"));
         return false;
     }
     if (root.isEmpty()) {
@@ -472,9 +501,18 @@ bool LuaPlugin::pushHook(const char *name)
     return found;
 }
 
+bool LuaPlugin::answersLookups()
+{
+    if (!state || !pushHook("before_lookup"))
+        return false;
+    lua_pop(state, 1);
+    return true;
+}
+
 bool LuaPlugin::call(int arguments, int results, QString *error)
 {
     ticks = 0;
+    logs = 0;
     lua_sethook(state, countHook, LUA_MASKCOUNT, hookInterval);
     memory.enforce = true;
     const int status = lua_pcall(state, arguments, results, 0);
@@ -552,17 +590,25 @@ bool LuaPlugin::beforeLookup(const Lookup &lookup, const Book &book, Card *card,
     for (const char *key : { "title", "html", "footer" }) {
         lua_pushstring(state, key);
         const int type = lua_rawget(state, -2);
-        const QString value = type == LUA_TSTRING ? text(state, -1) : QString();
+        size_t bytes = 0;
+        if (type == LUA_TSTRING)
+            lua_tolstring(state, -1, &bytes);
+        const bool html = qstrcmp(key, "html") == 0;
+        const QString value =
+                type == LUA_TSTRING && (!html || bytes <= htmlLimit) ? text(state, -1) : QString();
         lua_pop(state, 1);
         const bool footer = qstrcmp(key, "footer") == 0;
         if (type != LUA_TSTRING && !(footer && type == LUA_TNIL))
             return invalid(footer ? "returned a footer that is not a string"
                                   : "returned a card without a string title and html");
+        // The sheet lays the card out on the main thread.
+        if (html ? bytes > htmlLimit : value.size() > titleLimit)
+            return invalid("returned a card past its size limits");
         if (!footer && value.isEmpty())
             return invalid("returned a card with an empty title or html");
         if (qstrcmp(key, "title") == 0)
             result.title = value;
-        else if (qstrcmp(key, "html") == 0)
+        else if (html)
             result.html = value;
         else
             result.footer = value;
