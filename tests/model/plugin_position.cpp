@@ -60,6 +60,28 @@ void chapterTitleAndPage()
     require(position.chapter == "Two" && position.page == 11 && position.pages == 50,
             "Chapter title or page was wrong");
 }
+
+void linkJumpCapped()
+{
+    // The reader left page 11 for an endnote on page 49.
+    auto endnote = activity(2, 9, 10);
+    endnote.page = 48;
+    const auto capped = kobalt::plugins::capAtPage(kobalt::plugins::position(endnote), 11);
+    require(capped.page == 11 && near(capped.percent, 11.0 / 50 * 100),
+            "A link target counted as reached");
+    require(capped.chapter == "Three", "The cap changed the chapter");
+
+    const auto earlier = kobalt::plugins::position(activity(1, 2, 3));
+    const auto kept = kobalt::plugins::capAtPage(earlier, 40);
+    require(kept.page == earlier.page && near(kept.percent, earlier.percent),
+            "A position before the link origin was changed");
+
+    auto backward = activity(0, 1, 10);
+    backward.page = 0;
+    const auto front = kobalt::plugins::capAtPage(kobalt::plugins::position(backward), 3);
+    require(front.page == 1 && front.percent <= 3.0 / 50 * 100,
+            "A backward link was not capped by the smaller percent");
+}
 } // namespace
 
 int main()
@@ -68,5 +90,6 @@ int main()
     lastPageIsHundred();
     pageFallback();
     chapterTitleAndPage();
+    linkJumpCapped();
     return 0;
 }

@@ -42,4 +42,15 @@ inline Position position(const ReadingActivity &activity)
     result.percent = qBound(0.0, percent, 100.0);
     return result;
 }
+
+// Nothing past `page`, from 1, counts as reached, by page progress.
+inline Position capAtPage(Position position, int page)
+{
+    if (position.pages <= 0)
+        return position;
+    page = qBound(1, page, position.pages);
+    position.page = qMin(position.page, page);
+    position.percent = qMin(position.percent, double(page) / position.pages * 100);
+    return position;
+}
 } // namespace kobalt::plugins

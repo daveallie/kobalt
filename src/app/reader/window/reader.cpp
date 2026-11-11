@@ -1920,6 +1920,10 @@ void Reader::lookupSelection()
                 lookup.epoch = epoch;
                 lookup.word = query;
                 lookup.position = kobalt::plugins::position(reader->book->readingActivity());
+                // An endnote or other link target is not reached until the reader stays there.
+                if (!reader->linkHistory.isEmpty())
+                    lookup.position = kobalt::plugins::capAtPage(
+                            lookup.position, reader->linkHistory.first().page + 1);
                 reader->plugins->lookup(
                         lookup, [guard, timing](quint64 replied, kobalt::plugins::Card card) {
                             if (!guard)
