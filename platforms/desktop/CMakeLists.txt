@@ -70,7 +70,7 @@ configure_file("${source}/support/build_info.h.in" build_info.h @ONLY)
 file(GLOB_RECURSE shared CONFIGURE_DEPENDS
     "${source}/dictionaries/*.cpp" "${source}/engine/*.cpp"
     "${source}/library/*.cpp" "${source}/render/*.cpp"
-    "${source}/reading/*.cpp" "${source}/storage/*.cpp" "${source}/sync/*.cpp")
+    "${source}/plugins/*.cpp" "${source}/reading/*.cpp" "${source}/storage/*.cpp" "${source}/sync/*.cpp")
 add_library(kobalt-core OBJECT ${shared} display.cpp ../standalone/native_image.cpp
     "${source}/platform/qt/export_file.cpp"
     "${source}/platform/posix/diagnostics.cpp"
@@ -689,7 +689,7 @@ if(BUILD_TESTING)
         layout_cache resource_cache layout_compatibility reading_pace reading_speed engine_activity
         local_resources zip_resource diagnostics crash_reports dictionary_store image_damage page_pixels
         logical_word_counter brightness_gesture qt_compat page_refresh_regions screen_refresh plain_archive reading_progress
-        library kosync sync_coordinator annotation_draft chapter_progress style_sample_cache preview_store save_wait saved_words lua_runtime)
+        library kosync sync_coordinator annotation_draft chapter_progress style_sample_cache preview_store save_wait saved_words lua_runtime plugin_position)
     kobalt_regressions(model font_axes touch_rotation)
     kobalt_regressions(platform reader_orientation font_sources system_fonts nickel_dictionary_selection
         nickel_reading_pace_cache nickel_reading_save nickel_event_save nickel_account nickel_session_calls nickel_session_volume nickel_book_menu nickel_font_scale native_progress native_sync_network native_dialog_overlay native_lifecycle standby_input standby_diagnostics usb_removal page_transition_native page_animation)
@@ -732,7 +732,7 @@ if(BUILD_TESTING)
         "links:^(desktop\\.(links|inpageFootnotes|footnote.*|revealedLinkPress|tappableLinks|bookmarkCornerLinks)|engine\\.(links|search|word-selection)|lifecycle\\.(staleSearchReplyIgnored|searchScopesAndPagination|searchSurvivesReflow|searchHighlightClearsOnReflow))$"
         "annotations:^(desktop\\.(annotation.*|bookmark.*|pinnedBookmarks|customPinnedBookmarks|coordinateProbeSerialization|selectionCrossPageDrag)|ui\\.(annotation.*|marksSortingAndAnnotationRows)|lifecycle\\.(annotation.*|closeWithPendingBookmark)|model\\.(bookmark-store|custom-pins|highlight-store|annotation-database|annotation-draft)|session\\.(bookmark|highlight)-session|engine\\.source-index)$"
         "fonts:^(desktop\\.(publisherFontDefault|fontPagingClearsCaptions|kfFontVariants|opticalSize)|ui\\.fontSelectionDoesNotToggle|model\\.font-axes|platform\\.(font-sources|system-fonts)|resource\\.resource-provider)$"
-        "progress:^(desktop\\.graphMode|lifecycle\\.(progress.*|finish.*|developmentOptions|nativeProgressWaitsForSleep)|model\\.(reading-pace|reading-speed|reading-progress|chapter-progress|logical-word-counter)|engine\\.(document-word-count|large-toc)|platform\\.(native-progress|nickel-reading-pace-cache))$"
+        "progress:^(desktop\\.graphMode|lifecycle\\.(progress.*|finish.*|developmentOptions|nativeProgressWaitsForSleep)|model\\.(reading-pace|reading-speed|reading-progress|chapter-progress|logical-word-counter|plugin-position)|engine\\.(document-word-count|large-toc)|platform\\.(native-progress|nickel-reading-pace-cache))$"
         "storage:^(model\\.(storage-assets|android-assets|profile-storage|record-writer|main-thread|save-wait|reading-history)|session\\.reading-book|lifecycle\\.(closeWaitsFor.*|closeRetriesRequiredNativeSaves|closeWithUnusableSettings|sleepWaitsForNativeTimeBeforePosition|background.*|standaloneReadingHistory|revokedNativeDrainRetainsLocalSave|quitAfterFailedLocalSaveRetry|appearanceRetryCooldown|recoveryNoticeAfterFirstPage|activityBatchesAndLowBattery)|desktop\\.(sameProcessReadersDoNotRecoverEachOther|standaloneHistorySourceKeys)|platform\\.nickel-(event|reading)-save)$"
         "sleep:^(lifecycle\\.(sleep.*|readerStandbySetting|readerUsesSelectedSleepScreen|closedReaderDoesNotSaveSleepScreen|usb.*|persistedSleepScreen.*|homeSleepScreen.*|pageTurnsResumeWhenReaderIsShownAfterSleep|shutdownFinalSaveTimesOut|teardownRemovesApplicationFilter)|platform\\.(shutdown|sleep-persistence|kobo-power-screen|usb-removal|native-lifecycle)|desktop\\.deviceEmulation|model\\.engine-activity)$"
         "diagnostics:^(model\\.(diagnostics|crash-reports)|desktop\\.(diagnostics|storageDiagnostics|settingChangesLogged)|lifecycle\\.developmentStateReports|platform\\.standby-(input|diagnostics))$"
