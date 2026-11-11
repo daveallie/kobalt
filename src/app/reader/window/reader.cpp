@@ -9,6 +9,7 @@
 #include "ui/style/theme.h"
 #include "reader_p.h"
 #include "support/qt_compat.h"
+#include "plugins/plugin_position.h"
 #include "support/strings.h"
 #include "ui/input/input.h"
 #include "ui/style/fonts.h"
@@ -66,6 +67,7 @@ Reader::~Reader()
     appearancePreview->followPanel(nullptr, {});
     static_cast<SettingsPanel *>(general)->stylingHidden = {};
     cancelStylingSamples();
+    plugins.reset();
     if (kosyncClient)
         kosyncClient->persistSyncTime();
     if (closeWithoutSaving)
@@ -1905,23 +1907,73 @@ void Reader::lookupSelection()
                 guard->lookupText = query;
                 guard->lookupBounds = bounds.translated(
                         guard->page->mapTo(guard, QPoint(0, guard->page->topHeight())));
-                const auto result = guard->dictionary->lookup(guard->book->identity(), query);
-                if (!guard || guard->lookupEpoch != epoch || guard->lifecycleHidden)
-                    return;
-                timing.stage("lookup");
-                timing.field("chars", result.html.size());
-                guard->dictionaryPanel->setChoices(guard->dictionary->choices());
-                guard->dictionaryPanel->setBookFont(guard->bookFace());
-                guard->dictionaryPanel->open(query, result, guard->lookupBounds);
                 guard->lookupContext = range.context;
                 guard->lookupPosition = range.start;
-                guard->recordLookup(query, result);
-                timing.finish(guard->dictionaryPanel);
-                guard->syncAnnotationControls();
-                guard->updateOrientationBlock();
-                guard->updateLinkReturn();
+                auto *reader = guard.data();
+                if (!reader->plugins) {
+                    reader->openDictionary(query, timing);
+                    return;
+                }
+                // The lookup stays pending until a card, no card or the timeout arrives.
+                reader->lookupPending = true;
+                kobalt::plugins::Lookup lookup;
+                lookup.epoch = epoch;
+                lookup.word = query;
+                lookup.position = kobalt::plugins::position(reader->book->readingActivity());
+                reader->plugins->lookup(
+                        lookup, [guard, timing](quint64 replied, kobalt::plugins::Card card) {
+                            if (!guard)
+                                return;
+                            ++guard->pluginReplies;
+                            guard->finishPluginLookup(replied, card, timing);
+                        });
+                kobalt::qt::later(reader->services.pluginLookupTimeoutMs, reader,
+                                  [guard, epoch, timing] {
+                                      if (guard)
+                                          guard->finishPluginLookup(epoch, { }, timing);
+                                  });
             },
             true);
+}
+
+void Reader::finishPluginLookup(quint64 epoch, const kobalt::plugins::Card &card,
+                                kobalt::ui::PanelTiming timing)
+{
+    if (lookupEpoch != epoch || !lookupPending || lifecycleHidden || services.suspended()
+        || closing)
+        return;
+    lookupPending = false;
+    timing.stage("plugins");
+    if (card.isEmpty()) {
+        openDictionary(lookupText, timing);
+        return;
+    }
+    dictionaryPanel->setBookFont(bookFace());
+    dictionaryPanel->openCard(lookupText, card, lookupBounds);
+    timing.finish(dictionaryPanel);
+    syncAnnotationControls();
+    updateOrientationBlock();
+    updateLinkReturn();
+}
+
+void Reader::openDictionary(const QString &query, kobalt::ui::PanelTiming timing)
+{
+    const auto epoch = lookupEpoch;
+    lookupText = query;
+    QPointer<Reader> guard(this);
+    const auto result = dictionary->lookup(book->identity(), query);
+    if (!guard || lookupEpoch != epoch || lifecycleHidden)
+        return;
+    timing.stage("lookup");
+    timing.field("chars", result.html.size());
+    dictionaryPanel->setChoices(dictionary->choices());
+    dictionaryPanel->setBookFont(bookFace());
+    dictionaryPanel->open(query, result, lookupBounds);
+    recordLookup(query, result);
+    timing.finish(dictionaryPanel);
+    syncAnnotationControls();
+    updateOrientationBlock();
+    updateLinkReturn();
 }
 
 int Reader::millisecondsOfDay() const
@@ -3298,6 +3350,7 @@ void Reader::save(bool snapshot, bool background, bool persist)
     state["appearance_preview_pending"] =
             previewPageRequested != 0 && previewPageKey != previewPageRequested;
     state["annotation_dragging"] = annotationDrag.active();
+    state["plugin_replies"] = pluginReplies;
     state["bookmarked"] = page->bookmarked;
     state["bookmark_count"] = bookmarks->available() ? int(bookmarks->bookmarks().size()) : -1;
     state["bookmark_pages"] = [this] {

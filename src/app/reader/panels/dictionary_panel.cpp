@@ -147,6 +147,15 @@ DictionaryPanel::DictionaryPanel(QWidget *parent, KeyboardFactory makeKeyboard)
     actions->setAccessibleName(strings::get("dictionary_panel.actions"));
     actions->hide();
     connect(actions, &QPushButton::clicked, this, [this] { openActions(); });
+    pluginLookup = new ui::CellButton(ui::ControlIcon::Dictionaries, this);
+    pluginLookup->setObjectName("rrDictionaryPluginLookup");
+    pluginLookup->setAccessibleName(strings::get("dictionary_panel.open_dictionary"));
+    pluginLookup->setRule(Qt::LeftEdge);
+    pluginLookup->hide();
+    connect(pluginLookup, &QPushButton::clicked, this, [this] {
+        if (dictionaryRequested && !cardWord.isEmpty())
+            dictionaryRequested(cardWord);
+    });
     text = new ui::PagedText(this);
     text->setObjectName("rrDefinition");
     text->setTextFont(ui::interfaceFont(chrome::labelText));
@@ -246,19 +255,16 @@ QString DictionaryPanel::formatDefinition(const QString &html)
     return entries.join(QString());
 }
 
-void DictionaryPanel::open(const QString &word, const DictionaryResult &result,
-                           const QRect &selection)
+void DictionaryPanel::setHeadword(const QString &text)
 {
-    finishEditing(false);
-    setAccessibleName(strings::get("dictionary_panel.definition_for").arg(word));
-    this->word = word.simplified();
+    word = text.simplified();
     // The word appears as it does in the book. A word the book face cannot draw
     // in full uses the interface sans, so fallback glyphs never mix in one word.
     const QFont book = bookFont(chrome::titleText);
     // QRawFont checks this face alone; QFontMetrics also counts fallback fonts.
     const auto bookRaw = QRawFont::fromFont(book);
     bool covered = !bookFamily.isEmpty();
-    for (const auto character : this->word.toUcs4())
+    for (const auto character : word.toUcs4())
         if (covered && !bookRaw.supportsCharacter(character))
             covered = false;
     headwordFont = covered ? book : ui::interfaceFont(chrome::titleText);
@@ -271,6 +277,16 @@ void DictionaryPanel::open(const QString &word, const DictionaryResult &result,
     ui::readerStyle(query,
                     headword->property("reader_style").toString()
                             + "border:none;padding:0;background:palette(window);");
+}
+
+void DictionaryPanel::open(const QString &word, const DictionaryResult &result,
+                           const QRect &selection)
+{
+    finishEditing(false);
+    showingCard = false;
+    cardWord.clear();
+    setAccessibleName(strings::get("dictionary_panel.definition_for").arg(word));
+    setHeadword(word);
     const auto dictionaryName = result.dictionary.isEmpty()
             ? strings::get("dictionary_panel.dictionary_unavailable")
             : result.dictionary;
@@ -323,6 +339,25 @@ void DictionaryPanel::dismiss()
     renderedHtml.clear();
     sourceText.clear();
     text->clear();
+}
+
+void DictionaryPanel::openCard(const QString &word, const plugins::Card &card,
+                               const QRect &selection)
+{
+    finishEditing(false);
+    showingCard = true;
+    cardWord = word.simplified();
+    setAccessibleName(card.title);
+    setHeadword(card.title);
+    dropdown->hide();
+    definitionHtml = formatDefinition(card.html);
+    sourceText = card.footer;
+    renderedHtml.clear();
+    text->setPage(0);
+    place(selection);
+    show();
+    raise();
+    arrange();
 }
 
 QFont DictionaryPanel::bookFont(int pixels) const
@@ -526,16 +561,18 @@ void DictionaryPanel::updateDefinition()
 void DictionaryPanel::arrange()
 {
     // A narrow sheet keeps the word whole: edit, search and save share one menu.
-    const bool compact = !editing && isNarrowWidth(width(), ui::density());
+    const bool compact = !editing && !showingCard && isNarrowWidth(width(), ui::density());
     headword->setVisible(!editing);
-    edit->setVisible(!editing && !compact);
+    edit->setVisible(!editing && !compact && !showingCard);
     actions->setVisible(compact);
     query->setVisible(editing);
     editHint->setVisible(editing);
     submit->setVisible(editing);
-    search->setVisible(!editing && !compact);
-    const bool saving = !editing && saveAvailable && !compact;
+    search->setVisible(!editing && !compact && !showingCard);
+    const bool saving = !editing && saveAvailable && !compact && !showingCard;
     save->setVisible(saving);
+    dictionary->setVisible(!showingCard);
+    pluginLookup->setVisible(showingCard);
     close->setAccessibleName(strings::get(editing ? "dictionary_panel.cancel_edit"
                                                   : "dictionary_panel.close_definition"));
     dictionary->setEnabled(!editing && options.size() > 1);
@@ -545,11 +582,13 @@ void DictionaryPanel::arrange()
     const int cell = chrome::compactCellWidth;
     const int closeWidth = isNarrowWidth(width(), ui::density()) ? int(chrome::compactCellWidth)
                                                                  : int(chrome::cellWidth);
-    int selectorWidth = dictionary->sizeHint().width() - (int(chrome::cellWidth) - cell);
-    const int actionCells = editing || compact ? 2 : saving ? 4 : 3;
+    // A plugin card has only its book cell beside close, in the search cell's place.
+    int selectorWidth =
+            showingCard ? 0 : dictionary->sizeHint().width() - (int(chrome::cellWidth) - cell);
+    const int actionCells = editing || compact || showingCard ? 2 : saving ? 4 : 3;
     const int wordRoom = width() - (actionCells - 1) * cell - closeWidth - 2 * int(chrome::inset);
     const int wordWanted = qMin(ui::interfaceTextWidth(word, headwordFont), width() / 2);
-    if (wordRoom - selectorWidth < wordWanted)
+    if (!showingCard && wordRoom - selectorWidth < wordWanted)
         selectorWidth =
                 qMin(selectorWidth, dictionary->widthForLabel(qMax(cell, wordRoom - wordWanted)));
     const int selectorLeft = width() - closeWidth - selectorWidth;
@@ -558,9 +597,10 @@ void DictionaryPanel::arrange()
     save->setGeometry(selectorLeft - cell, top, cell, chrome::actionHeight);
     actions->setGeometry(selectorLeft - cell, top, cell, chrome::actionHeight);
     const int editorLeft = selectorLeft - (saving ? 2 : 1) * cell;
-    const int editLeft = editorLeft - (editing || compact ? 0 : cell);
+    const int editLeft = editorLeft - (editing || compact || showingCard ? 0 : cell);
     edit->setGeometry(editLeft, top, cell, chrome::actionHeight);
     search->setGeometry(editorLeft, top, cell, chrome::actionHeight);
+    pluginLookup->setGeometry(search->geometry());
     submit->setGeometry(search->geometry());
     query->setGeometry(0, top, qMax(1, editorLeft), chrome::actionHeight);
     const int wordWidth = qMax(1, editLeft - 2 * chrome::inset);

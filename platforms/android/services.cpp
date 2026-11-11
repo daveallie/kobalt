@@ -72,6 +72,17 @@ ReaderHostServices readerHostServices()
         result.deviceName = QStringLiteral("Android");
     result.colorDisplay = [] { return true; };
     result.systemRotation = true;
+    const QJniObject application = QNativeInterface::QAndroidApplication::context();
+    const auto externalFiles =
+            application
+                    .callObjectMethod("getExternalFilesDir", "(Ljava/lang/String;)Ljava/io/File;",
+                                      static_cast<jstring>(nullptr))
+                    .callObjectMethod("getAbsolutePath", "()Ljava/lang/String;")
+                    .toString();
+    if (!externalFiles.isEmpty())
+        result.pluginDirectory = externalFiles + "/plugins";
+    // Android imports books, so no sidecar sits beside them.
+    result.bookSidecars = false;
     result.browserAvailable = [] { return true; };
     result.openBrowser = [](const QUrl &url, QWidget *) {
         return url.isValid() && !url.host().isEmpty()

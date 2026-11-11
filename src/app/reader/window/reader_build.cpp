@@ -479,6 +479,23 @@ void Reader::buildReadingPage()
         recordLookup(lookupText, result);
     };
     dictionaryPanel->searchRequested = [this](const QString &query) { openSearch(query); };
+    dictionaryPanel->dictionaryRequested = [this](const QString &query) {
+        if (lifecycleHidden || services.suspended() || closing)
+            return;
+        openDictionary(query, kobalt::ui::PanelTiming("dictionary"));
+    };
+    if (!services.pluginDirectory.isEmpty()) {
+        const QUrl source(book->identity());
+        kobalt::plugins::Context context;
+        context.bookFile = source.isLocalFile() ? source.toLocalFile() : QString();
+        context.sidecars = services.bookSidecars;
+        kobalt::plugins::Book about;
+        about.identity = book->identity();
+        about.title = session->title();
+        about.language = session->state().value("language").toString();
+        plugins = std::make_unique<kobalt::plugins::PluginHost>(services.pluginDirectory, context,
+                                                                about);
+    }
     dictionaryPanel->chosen = [this](const QString &id) {
         if (lifecycleHidden || services.suspended() || closing)
             return;

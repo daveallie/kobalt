@@ -275,11 +275,12 @@ Window::Window(storage::Paths paths, EngineFontInputs fonts, QString placeholder
     : clockSource(std::move(clock)),
       controller(
               paths, std::move(fonts), std::move(placeholder),
-              [this, configureServices = std::move(configureServices)] {
+              [this, profile = paths.directory, configureServices = std::move(configureServices)] {
                   auto services = readerHostServices();
                   services.annotationExporter = [this](QWidget *reader) {
                       return reader::pickerAnnotationExporter(reader, this);
                   };
+                  services.pluginDirectory = profile + "/plugins";
                   services.devicePreview = [this] { return screenPreset != 0; };
                   services.readerStandbySupported = screenPreset != 0;
                   // An emulated sleep or power-off suspends the reader as on Kobo.
