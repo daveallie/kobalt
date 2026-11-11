@@ -5,7 +5,7 @@
 +project(Lua LANGUAGES C)
 +set(CMAKE_C_STANDARD 99)
 +set(CMAKE_C_STANDARD_REQUIRED ON)
-+set(CMAKE_C_EXTENSIONS OFF)
++set(CMAKE_C_EXTENSIONS ON)
 +file(GLOB sources "${CMAKE_CURRENT_SOURCE_DIR}/src/*.c")
 +list(FILTER sources EXCLUDE REGEX "/(lua|luac)\\.c$")
 +add_library(lua STATIC ${sources})
