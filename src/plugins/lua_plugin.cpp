@@ -233,6 +233,11 @@ const Manifest &LuaPlugin::manifest() const
     return pluginManifest;
 }
 
+void LuaPlugin::setAbort(const std::atomic_bool *value)
+{
+    abort = value;
+}
+
 QString LuaPlugin::failure(const QString &message) const
 {
     return QStringLiteral("plugin ") + pluginManifest.id + QStringLiteral(": ") + message;
@@ -342,10 +347,13 @@ int LuaPlugin::jsonDecode(lua_State *state)
 void LuaPlugin::countHook(lua_State *state, lua_Debug *)
 {
     LuaPlugin *plugin = owner(state);
-    if (++plugin->ticks <= plugin->tickLimit)
+    const bool stopped = plugin->abort && plugin->abort->load(std::memory_order_relaxed);
+    if (!stopped && ++plugin->ticks <= plugin->tickLimit)
         return;
     // Fail at every instruction from now on, so that pcall cannot resume the loop.
     lua_sethook(state, countHook, LUA_MASKCOUNT, 1);
+    if (stopped)
+        luaL_error(state, "was stopped");
     luaL_error(state, "exceeded its instruction budget");
 }
 

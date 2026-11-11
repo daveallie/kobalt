@@ -2,6 +2,7 @@
 #include "plugin_types.h"
 
 #include <QString>
+#include <atomic>
 #include <cstddef>
 
 struct lua_State;
@@ -43,6 +44,8 @@ public:
     // false = failure (error/budget/memory/bad type); true with an empty card = no card
     bool beforeLookup(const Lookup &lookup, const Book &book, Card *card, QString *error);
     const Manifest &manifest() const;
+    // While *abort is true, a running hook stops at its next budget check and fails.
+    void setAbort(const std::atomic_bool *abort);
 
 private:
     struct Memory
@@ -69,6 +72,7 @@ private:
     QString root;
     int tickLimit;
     int ticks = 0;
+    const std::atomic_bool *abort = nullptr;
     Memory memory;
     lua_State *state = nullptr;
 };
