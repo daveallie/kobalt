@@ -76,15 +76,14 @@ Each plugin has its own Lua state with `base`, `string`, `table`, `math` and `ut
   - A pattern match, such as `string.find` or `string.gsub`, stops after 1,000,000 steps per call.
   - A plain `string.find` compares at most 64 MiB of text per call.
   - `string.rep` of empty strings returns an empty string at once.
-  - `table.insert`, `table.remove`, `table.concat`, `table.move` and `table.sort` refuse more than 4,194,304 elements per call. `table.sort` makes at most 64 comparisons per element, but always allows 4,194,304 and never more than 8,388,608, which sorts about 400,000 numbers.
+  - `table.insert`, `table.remove`, `table.concat`, `table.move` and `table.sort` refuse more than 4,194,304 elements per call. `table.sort` makes at most 64 comparisons per element, but always allows 4,194,304 and never more than 8,388,608, which sorts about 300,000 to 400,000 elements.
   - A call past one of these limits raises an error.
-  - While the plugin thread is stopping, a running hook can no longer grow its memory, so a single instruction cannot copy up to the memory cap after the stop.
-
-Closing a book stops a running hook at its next instruction check, but waits for a C call that is already running. The limits above keep each such call to a fraction of a second on a desktop and to a few seconds on a slow e-reader. They bound the wait without guaranteeing any particular time.
 - A lookup waits 300 ms for a card, counted from when the reader posts it. When the time runs out, or every plugin returns `nil`, the dictionary opens. A card that arrives later is dropped.
 - A plugin that raises an error, exceeds a budget or returns an invalid card has failed that call and is skipped for it. After three failures in one book, Kobalt disables it until the book is reopened. Failures go to the diagnostic log.
 
 All plugins run on one plugin thread that owns every Lua state, so a slow plugin never delays a page turn or a tap. A lookup that arrives before `book_opened` has finished waits behind it, and that wait counts toward its 300 ms. Once the plugins have opened and none of them defines `before_lookup`, or every one that does is disabled, the dictionary opens at once without asking the plugin thread. Page changes, hiding, suspension and a new selection cancel a pending plugin lookup.
+
+Closing a book stops a running hook: from the next instruction check, every instruction raises an error, so `pcall` cannot resume it and each `__close` handler that runs during the unwinding fails at once. A stopped hook cannot make an allocation larger than 64 KiB, so a single instruction cannot copy up to the memory cap; smaller allocations, which raising the error and unwinding need, still succeed. Closing then runs `book_closed` and waits for the plugin thread, including any C call that was already running. The limits above keep such a call to a fraction of a second on a desktop, and possibly a few seconds on a slow e-reader. They bound the wait but do not guarantee a time.
 
 ## Testing a plugin
 
