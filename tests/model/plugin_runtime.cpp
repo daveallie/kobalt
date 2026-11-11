@@ -300,6 +300,13 @@ void patternSteps()
     require(!ok && card.isEmpty(), "A backtracking pattern did not fail");
     require(error.contains("pattern too complex"), "The error does not report the pattern");
     require(timer.elapsed() < 1000, "The pattern limit did not stop the match within a second");
+
+    // Each start position stays cheap; only a budget for the whole call stops this.
+    timer.restart();
+    ask(plugin, "unanchored", &ok, &error);
+    require(!ok && error.contains("pattern too complex"),
+            "An unanchored scan of a long subject did not fail");
+    require(timer.elapsed() < 1000, "The unanchored scan was not stopped within a second");
 }
 
 void manifestValidation()
