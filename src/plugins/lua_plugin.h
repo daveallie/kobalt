@@ -46,6 +46,9 @@ public:
     // True when main.lua defined before_lookup.
     bool answersLookups();
     const Manifest &manifest() const;
+
+    // Allocations refused so far, for tests.
+    std::size_t refusedAllocations() const { return memory.refused; }
     // While *abort is true, a running hook stops at its next budget check and
     // cannot make allocations larger than 64 KiB, so it fails.
     void setAbort(const std::atomic_bool *abort);
@@ -55,6 +58,7 @@ public:
         std::size_t used = 0, cap = 0;
         bool enforce = false;
         const std::atomic_bool *abort = nullptr;
+        std::size_t refused = 0;
     };
 
 private:

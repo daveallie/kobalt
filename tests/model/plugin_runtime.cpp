@@ -417,33 +417,41 @@ void logRateLimit()
     kobalt::setDiagnosticObserver({ });
 }
 
-void stopUnwindsQuickly()
+// `word` "full" fills the heap to the cap before the stop.
+void stopUnwindsQuickly(const char *word)
 {
     std::atomic_bool abort{ false };
     LuaPlugin plugin(manifest(fixture("stop")), { });
     plugin.setAbort(&abort);
     loaded(plugin);
     QElapsedTimer timer;
+    bool atCap = false;
+    std::size_t refusedBefore = 0;
     kobalt::setDiagnosticObserver([&](const QJsonObject &event) {
+        atCap = atCap || event.value("message").toString().endsWith("at cap");
         if (event.value("message").toString().endsWith("ready")) {
             abort = true;
+            refusedBefore = plugin.refusedAllocations();
             timer.start();
         }
     });
     bool ok = true;
     QString error;
-    ask(plugin, "word", &ok, &error);
+    ask(plugin, word, &ok, &error);
     const qint64 elapsed = timer.isValid() ? timer.elapsed() : -1;
+    const std::size_t refused = plugin.refusedAllocations() - refusedBefore;
     kobalt::setDiagnosticObserver({ });
-    if (elapsed < 0)
-        std::fprintf(stderr, "%s\n", qPrintable(error));
+    if (elapsed < 0 || !error.contains("was stopped"))
+        std::fprintf(stderr, "%s: %s\n", word, qPrintable(error));
     require(elapsed >= 0, "The stop fixture never became ready");
-    if (!error.contains("was stopped"))
-        std::fprintf(stderr, "%s\n", qPrintable(error));
+    require(atCap == (qstrcmp(word, "full") == 0), "The stop fixture did not reach the memory cap");
     require(!ok && error.contains("was stopped"), "A stopped hook did not report the stop");
     if (elapsed >= 500)
-        std::fprintf(stderr, "Unwinding took %lld ms\n", elapsed);
+        std::fprintf(stderr, "Unwinding %s took %lld ms\n", word, elapsed);
     require(elapsed < 500, "Unwinding a stopped hook took half a second or more");
+    if (refused > 0)
+        std::fprintf(stderr, "Unwinding %s refused %zu allocations\n", word, refused);
+    require(refused == 0, "Unwinding a stopped hook needed memory");
 }
 
 void manifestValidation()
@@ -503,7 +511,8 @@ int main(int argc, char **argv)
     cLibraryLimits();
     cardLimits();
     logRateLimit();
-    stopUnwindsQuickly();
+    stopUnwindsQuickly("word");
+    stopUnwindsQuickly("full");
     manifestValidation();
     puts("PASS: Lua plugins run in a sandbox");
 }

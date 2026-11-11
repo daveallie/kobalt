@@ -24,6 +24,8 @@ constexpr qint64 sourceLimit = 1024 * 1024;
 constexpr int titleLimit = 200;
 constexpr std::size_t htmlLimit = 64 * 1024;
 constexpr std::size_t stoppedGrowth = 64 * 1024;
+// Registry keys of the hook's error messages; mutable so that they never share an address.
+char stoppedKey, budgetKey;
 
 QString text(lua_State *state, int index)
 {
@@ -282,8 +284,10 @@ void *LuaPlugin::allocate(void *memory, void *block, std::size_t oldSize, std::s
     if (usage->enforce && newSize > oldSize
         && (usage->used - oldSize + newSize > usage->cap
             || (newSize - oldSize > stoppedGrowth && usage->abort
-                && usage->abort->load(std::memory_order_relaxed))))
+                && usage->abort->load(std::memory_order_relaxed)))) {
+        ++usage->refused;
         return nullptr;
+    }
     void *result = std::realloc(block, newSize);
     if (result)
         usage->used = usage->used - oldSize + newSize;
@@ -381,9 +385,9 @@ void LuaPlugin::countHook(lua_State *state, lua_Debug *)
         return;
     // Fail at every instruction from now on, so that pcall cannot resume the loop.
     lua_sethook(state, countHook, LUA_MASKCOUNT, 1);
-    if (stopped)
-        luaL_error(state, "was stopped");
-    luaL_error(state, "exceeded its instruction budget");
+    // The messages are made in advance: at the cap, each refused allocation runs a full GC.
+    lua_rawgetp(state, LUA_REGISTRYINDEX, stopped ? &stoppedKey : &budgetKey);
+    lua_error(state);
 }
 
 int LuaPlugin::readFile(lua_State *state)
@@ -467,6 +471,10 @@ bool LuaPlugin::load(QString *error)
     }
     *static_cast<LuaPlugin **>(lua_getextraspace(state)) = this;
     openLibraries(state);
+    lua_pushliteral(state, "was stopped");
+    lua_rawsetp(state, LUA_REGISTRYINDEX, &stoppedKey);
+    lua_pushliteral(state, "exceeded its instruction budget");
+    lua_rawsetp(state, LUA_REGISTRYINDEX, &budgetKey);
 
     lua_createtable(state, 0, 4);
     lua_createtable(state, 0, 1);
