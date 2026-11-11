@@ -51,7 +51,7 @@ end
 
 After the reader follows a link, such as an endnote, the target does not count as reached. Until the reader returns or chooses to stay, `position.page` is at most the page the link left, and `position.percent` is at most that page's share of the page count, whichever is smaller than the computed value.
 
-A card needs a non-empty string `title` and `html`. `footer` is optional. `title` and `footer` may have at most 200 characters and `html` at most 64 KiB, because the sheet lays the card out on the main thread; a larger card is a failure. Kobalt shows the card in the dictionary sheet with the title in the headword style. It formats `html` like a dictionary definition and shows `footer` in the line style of Dictionary sources. The sheet has a book button, which closes the card and opens the normal dictionary lookup for the same word, and a close button. Returning `nil` or no value lets the dictionary open. Any other result counts as a failure.
+A card needs a non-empty string `title` and `html`. `footer` is optional. `title` and `footer` may have at most 200 characters (UTF-16 code units) and `html` at most 64 KiB, because the sheet lays the card out on the main thread; a larger card is a failure. Kobalt shows the card in the dictionary sheet with the title in the headword style. It formats `html` like a dictionary definition and shows `footer` in the line style of Dictionary sources. The sheet has a book button, which closes the card and opens the normal dictionary lookup for the same word, and a close button. Returning `nil` or no value lets the dictionary open. Any other result counts as a failure.
 
 ## The `kobalt` table
 
@@ -66,7 +66,7 @@ A file larger than the memory the plugin has left returns `nil` and a message, w
 
 ## Sandbox
 
-Each plugin has its own Lua state with `base`, `string`, `table`, `math` and `utf8`. These are absent: `io`, `os`, `package`, `debug`, `require`, `dofile`, `loadfile` and `print`. `load` accepts text chunks only. `setmetatable` refuses a metatable with `__gc`, because finalizers run outside the instruction budget. Use `kobalt.log` instead of `print`.
+Each plugin has its own Lua state with `base`, `string`, `table`, `math` and `utf8`. These are absent: `io`, `os`, `package`, `debug`, `require`, `dofile`, `loadfile` and `print`. `load` accepts text chunks only. `setmetatable` refuses a metatable with `__gc`, because finalizers run outside the instruction budget. Weak-keyed tables (`__mode` with `k`) keep their keys as strong references, because collecting weak keys can take the garbage collector time that grows with the square of the tables; weak values are still collected. Use `kobalt.log` instead of `print`.
 
 ## Budgets and failures
 
@@ -76,8 +76,11 @@ Each plugin has its own Lua state with `base`, `string`, `table`, `math` and `ut
   - A pattern match, such as `string.find` or `string.gsub`, stops after 1,000,000 steps per call.
   - A plain `string.find` compares at most 64 MiB of text per call.
   - `string.rep` of empty strings returns an empty string at once.
-  - `table.insert`, `table.remove`, `table.concat`, `table.move` and `table.sort` refuse more than 4,194,304 elements per call, and `table.sort` makes at most 4,194,304 comparisons.
-  - A call past one of these limits raises an error. A plugin thread that is closing waits for a running C call to end, so these limits, together with the memory cap, bound how long closing a book can wait.
+  - `table.insert`, `table.remove`, `table.concat`, `table.move` and `table.sort` refuse more than 4,194,304 elements per call. `table.sort` makes at most 64 comparisons per element, but always allows 4,194,304 and never more than 8,388,608, which sorts about 400,000 numbers.
+  - A call past one of these limits raises an error.
+  - While the plugin thread is stopping, a running hook can no longer grow its memory, so a single instruction cannot copy up to the memory cap after the stop.
+
+Closing a book stops a running hook at its next instruction check, but waits for a C call that is already running. The limits above keep each such call to a fraction of a second on a desktop and to a few seconds on a slow e-reader. They bound the wait without guaranteeing any particular time.
 - A lookup waits 300 ms for a card, counted from when the reader posts it. When the time runs out, or every plugin returns `nil`, the dictionary opens. A card that arrives later is dropped.
 - A plugin that raises an error, exceeds a budget or returns an invalid card has failed that call and is skipped for it. After three failures in one book, Kobalt disables it until the book is reopened. Failures go to the diagnostic log.
 
