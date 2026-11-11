@@ -12,6 +12,10 @@ local list = kobalt.json.decode("[10, [20], {\"a\": 30}]")
 assert(list[1] == 10 and list[2][1] == 20 and list[3].a == 30, "the top-level array is wrong")
 local invalid, message = kobalt.json.decode("{ broken")
 assert(invalid == nil and type(message) == "string" and #message > 0, "invalid JSON did not fail")
+for _, scalar in ipairs({ "42", '"text"', "true", "null" }) do
+    local decoded, reason = kobalt.json.decode(scalar)
+    assert(decoded == nil and type(reason) == "string", "a top-level scalar decoded: " .. scalar)
+end
 
 function before_lookup(ctx)
     return { title = "json", html = "ok" }

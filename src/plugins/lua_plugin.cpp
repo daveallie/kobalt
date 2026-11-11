@@ -10,6 +10,7 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QJsonValue>
+#include <QRegularExpression>
 #include <cmath>
 #include <cstdlib>
 #include <lua.hpp>
@@ -129,6 +130,22 @@ int textLoad(lua_State *state)
     return lua_gettop(state);
 }
 
+// Lua runs finalizers with hooks off, so a __gc could loop past the budget.
+int safeSetmetatable(lua_State *state)
+{
+    if (lua_type(state, 2) == LUA_TTABLE) {
+        lua_pushliteral(state, "__gc");
+        const bool finalizer = lua_rawget(state, 2) != LUA_TNIL;
+        lua_pop(state, 1);
+        if (finalizer)
+            return luaL_error(state, "metatables with __gc are not allowed");
+    }
+    lua_pushvalue(state, lua_upvalueindex(1));
+    lua_insert(state, 1);
+    lua_call(state, lua_gettop(state) - 1, LUA_MULTRET);
+    return lua_gettop(state);
+}
+
 void openLibraries(lua_State *state)
 {
     const luaL_Reg libraries[] = { { LUA_GNAME, luaopen_base },
@@ -140,13 +157,17 @@ void openLibraries(lua_State *state)
         luaL_requiref(state, library.name, library.func, 1);
         lua_pop(state, 1);
     }
-    for (const char *name : { "dofile", "loadfile", "require", "io", "os", "package", "debug" }) {
+    for (const char *name :
+         { "dofile", "loadfile", "require", "print", "io", "os", "package", "debug" }) {
         lua_pushnil(state);
         lua_setglobal(state, name);
     }
     lua_getglobal(state, "load");
     lua_pushcclosure(state, textLoad, 1);
     lua_setglobal(state, "load");
+    lua_getglobal(state, "setmetatable");
+    lua_pushcclosure(state, safeSetmetatable, 1);
+    lua_setglobal(state, "setmetatable");
 }
 } // namespace
 
@@ -168,8 +189,9 @@ bool readManifest(const QString &directory, Manifest *out, QString *error)
     const QJsonObject object = document.object();
     Manifest manifest;
     manifest.id = object.value(QStringLiteral("id")).toString();
-    if (manifest.id.isEmpty()) {
-        *error = manifestPath + QStringLiteral(" has no id");
+    if (!QRegularExpression(QStringLiteral("^[A-Za-z0-9._-]+\\z")).match(manifest.id).hasMatch()
+        || manifest.id == QLatin1String(".") || manifest.id == QLatin1String("..")) {
+        *error = manifestPath + QStringLiteral(" has no id of letters, digits, '.', '_' or '-'");
         return false;
     }
     const QJsonValue api = object.value(QStringLiteral("api"));
@@ -261,9 +283,10 @@ int LuaPlugin::pushFile(lua_State *state, const QString &path)
         return 2;
     }
     Memory &usage = owner(state)->memory;
+    const bool enforced = usage.enforce;
     usage.enforce = false;
     lua_pushlstring(state, data.constData(), size_t(data.size()));
-    usage.enforce = true;
+    usage.enforce = enforced;
     return 1;
 }
 
@@ -290,10 +313,16 @@ int LuaPlugin::jsonDecode(lua_State *state)
                          + QString::number(parse.offset));
             return 2;
         }
+        if (!document.isArray() && !document.isObject()) {
+            lua_pushnil(state);
+            lua_pushliteral(state, "JSON must be an object or an array");
+            return 2;
+        }
+        const bool enforced = usage.enforce;
         usage.enforce = false;
         decoded = document.isArray() ? pushJsonArray(state, document.array(), 0)
                                      : pushJsonObject(state, document.object(), 0);
-        usage.enforce = true;
+        usage.enforce = enforced;
     }
     const bool fits = usage.used <= usage.cap;
     if (!decoded || !fits) {

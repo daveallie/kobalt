@@ -1,0 +1,40 @@
+--- a/src/lstrlib.c
++++ b/src/lstrlib.c
+@@ -361,6 +361,7 @@
+   const char *p_end;  /* end ('\0') of pattern */
+   lua_State *L;
+   int matchdepth;  /* control for recursive depth (to avoid C stack overflow) */
++  unsigned long steps;  /* match steps since the current match began */
+   unsigned char level;  /* total number of captures (finished or unfinished) */
+   struct {
+     const char *init;
+@@ -371,6 +372,12 @@
+ 
+ /* recursive function */
+ static const char *match (MatchState *ms, const char *s, const char *p);
++
++
++/* maximum steps of one match, which the instruction hook cannot see */
++#if !defined(MAXMATCHSTEPS)
++#define MAXMATCHSTEPS	1000000UL
++#endif
+ 
+ 
+ /* maximum recursion depth for 'match' */
+@@ -571,6 +578,8 @@
+   if (l_unlikely(ms->matchdepth-- == 0))
+     luaL_error(ms->L, "pattern too complex");
+   init: /* using goto to optimize tail recursion */
++  if (l_unlikely(++ms->steps > MAXMATCHSTEPS))
++    luaL_error(ms->L, "pattern too complex");
+   if (p != ms->p_end) {  /* end of pattern? */
+     switch (*p) {
+       case '(': {  /* start capture */
+@@ -766,6 +775,7 @@
+ static void reprepstate (MatchState *ms) {
+   ms->matchdepth = MAXCCALLS;
+   ms->level = 0;
++  ms->steps = 0;
+ }
+ 
+ 

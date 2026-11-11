@@ -271,13 +271,45 @@ void memoryCap()
             "Large JSON was decoded past the memory cap");
 }
 
+void finalizerRejected()
+{
+    {
+        LuaPlugin plugin(manifest(fixture("finalizer")), { });
+        loaded(plugin);
+        require(askHtml(plugin, "word") == "indexed", "An ordinary metatable was rejected");
+        bool ok = true;
+        QString error;
+        const auto card = ask(plugin, "finalizer", &ok, &error);
+        require(!ok && card.isEmpty(), "A __gc metatable was accepted");
+        require(error.contains("__gc"), "The error does not name __gc");
+        require(askHtml(plugin, "word") == "indexed", "The plugin did not recover");
+    }
+    puts("Destroying a plugin after a rejected finalizer returns");
+}
+
+void patternSteps()
+{
+    LuaPlugin plugin(manifest(fixture("pattern")), { });
+    loaded(plugin);
+    require(askHtml(plugin, "word") == "200000", "An ordinary long gsub failed");
+    QElapsedTimer timer;
+    timer.start();
+    bool ok = true;
+    QString error;
+    const auto card = ask(plugin, "slow", &ok, &error);
+    require(!ok && card.isEmpty(), "A backtracking pattern did not fail");
+    require(error.contains("pattern too complex"), "The error does not report the pattern");
+    require(timer.elapsed() < 1000, "The pattern limit did not stop the match within a second");
+}
+
 void manifestValidation()
 {
     const auto valid = manifest(fixture("echo"));
     require(valid.id == "echo" && valid.name == "echo" && valid.version == "1" && valid.api == 1,
             "The manifest fields are wrong");
     require(QDir(valid.directory) == QDir(fixture("echo")), "The manifest folder is wrong");
-    for (const char *name : { "api_two", "missing_id", "invalid_json", "missing_main", "absent" }) {
+    for (const char *name :
+         { "api_two", "missing_id", "bad_id", "invalid_json", "missing_main", "absent" }) {
         QString error;
         Manifest result;
         const bool ok = readManifest(fixture(name), &result, &error);
@@ -303,6 +335,8 @@ int main()
     utf8RoundTrip();
     ctxShape();
     memoryCap();
+    finalizerRejected();
+    patternSteps();
     manifestValidation();
     puts("PASS: Lua plugins run in a sandbox");
 }

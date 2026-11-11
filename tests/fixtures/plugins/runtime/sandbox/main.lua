@@ -1,4 +1,4 @@
-for _, name in ipairs({ "io", "os", "package", "debug", "dofile", "loadfile", "require" }) do
+for _, name in ipairs({ "io", "os", "package", "debug", "dofile", "loadfile", "require", "print" }) do
     assert(_G[name] == nil, name .. " is visible")
 end
 local chunk, message = load(string.dump(function() return 1 end))
