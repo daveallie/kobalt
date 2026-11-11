@@ -5,14 +5,17 @@
 #include "support/qt_compat.h"
 
 #include <QDir>
+#include <QMutex>
 #include <QSet>
 #include <algorithm>
+#include <atomic>
 #include <memory>
 #include <vector>
 
 namespace kobalt::plugins {
 namespace {
 constexpr int failureLimit = 3;
+std::atomic_int detached{ 0 };
 
 void skipped(const QString &folder, const QString &reason)
 {
@@ -21,18 +24,30 @@ void skipped(const QString &folder, const QString &reason)
 }
 } // namespace
 
+struct PluginHost::Shared
+{
+    std::atomic_bool abort{ false }, opened{ false }, answers{ false };
+
+    enum State { Attached, Detached, Finished };
+
+    std::atomic_int state{ Attached };
+    // Guards `host`, which is null once the host is gone, while a reply is posted to it.
+    QMutex mutex;
+    PluginHost *host = nullptr;
+};
+
 // Lives on the plugin thread; every member is touched only there.
 class PluginHost::Worker : public QObject
 {
 public:
-    Worker(Directory directory, Context context, Book book, const std::atomic_bool *abort,
-           std::atomic_bool *opened, std::atomic_bool *answers)
+    Worker(Directory directory, Context context, Book book, std::shared_ptr<Shared> shared)
         : directory(std::move(directory)),
           context(std::move(context)),
           book(std::move(book)),
-          abort(abort),
-          opened(opened),
-          answers(answers)
+          shared(std::move(shared)),
+          abort(&this->shared->abort),
+          opened(&this->shared->opened),
+          answers(&this->shared->answers)
     {
     }
 
@@ -55,6 +70,7 @@ private:
     Directory directory;
     Context context;
     Book book;
+    std::shared_ptr<Shared> shared;
     const std::atomic_bool *abort;
     std::atomic_bool *opened, *answers;
     std::vector<Entry> plugins;
@@ -168,66 +184,116 @@ void PluginHost::Worker::fail(Entry &entry, const QString &error)
     }
 }
 
-PluginHost::PluginHost(Directory pluginDirectory, Context context, Book book, QObject *parent)
-    : QObject(parent),
-      worker(new Worker(std::move(pluginDirectory), std::move(context), std::move(book), &abort,
-                        &opened, &answers))
+PluginHost::PluginHost(Directory pluginDirectory, Context context, Book book, int joinLimitMs,
+                       QObject *parent)
+    : QObject(parent), shared(std::make_shared<Shared>()), joinLimitMs(joinLimitMs)
 {
-    thread.setObjectName(QStringLiteral("plugins"));
-    worker->moveToThread(&thread);
-    thread.start();
+    shared->host = this;
+    if (detached.load() > 0) {
+        diagnostic(
+                "plugins-off",
+                { { "reason", QStringLiteral("a plugin thread from an earlier book still runs") } },
+                DiagnosticSeverity::Warning);
+        shared->opened.store(true, std::memory_order_release);
+        return;
+    }
+    worker = new Worker(std::move(pluginDirectory), std::move(context), std::move(book), shared);
+    thread = new QThread;
+    thread->setObjectName(QStringLiteral("plugins"));
+    worker->moveToThread(thread);
     Worker *target = worker;
+    std::shared_ptr<Shared> state = shared;
+    // Without a context this runs directly on the plugin thread after its event
+    // loop ends, so the worker is idle.
+    QObject::connect(thread, &QThread::finished, [target, state] {
+        delete target;
+        if (state->state.exchange(Shared::Finished) == Shared::Detached)
+            --detached;
+    });
+    QObject::connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    thread->start();
     qt::invoke(worker, [target] { target->open(); }, Qt::QueuedConnection);
 }
 
 PluginHost::~PluginHost()
 {
     closing = true;
-    abort = true;
+    if (!thread)
+        return;
+    shared->abort = true;
     Worker *target = worker;
-    std::atomic_bool *flag = &abort;
-    // Queued lookups ahead of this call return at once; book_closed then runs unstopped.
+    std::shared_ptr<Shared> state = shared;
+    // Queued lookups ahead of this call return at once; book_closed then runs unstopped,
+    // unless the host has given up on the thread meanwhile.
     // Quitting after close, on the plugin thread, keeps the event loop from dropping this call.
     qt::invoke(
             worker,
-            [target, flag] {
-                *flag = false;
+            [target, state] {
+                state->abort = false;
+                if (state->state.load() != Shared::Attached)
+                    state->abort = true;
                 target->close();
                 QThread::currentThread()->quit();
             },
             Qt::QueuedConnection);
+    bool joined = false;
     {
         mainthread::BlockingOperation operation("plugins.join");
-        thread.wait();
+        joined = thread->wait(static_cast<unsigned long>(qMax(0, joinLimitMs)));
+        QMutexLocker lock(&shared->mutex);
+        shared->host = nullptr;
     }
-    delete worker;
+    if (joined) {
+        delete thread;
+        return;
+    }
+    ++detached;
+    if (shared->state.exchange(Shared::Detached) == Shared::Finished) {
+        --detached;
+        return;
+    }
+    shared->abort = true;
+    diagnostic("plugin-hang", { { "waited_ms", joinLimitMs } }, DiagnosticSeverity::Warning);
+}
+
+int PluginHost::detachedThreads()
+{
+    return detached.load();
 }
 
 bool PluginHost::skipsLookups() const
 {
-    return opened.load(std::memory_order_acquire) && !answers.load(std::memory_order_relaxed);
+    return shared->opened.load(std::memory_order_acquire)
+            && !shared->answers.load(std::memory_order_relaxed);
 }
 
 void PluginHost::lookup(const Lookup &lookup, Reply reply)
 {
     const quint64 request = ++requests;
     pending.insert(request, std::move(reply));
+    PluginHost *self = this;
+    const auto answer = [self, request, epoch = lookup.epoch](const Card &card) {
+        return [self, request, epoch, card] {
+            const Reply reply = self->pending.take(request);
+            if (!self->closing && reply)
+                reply(epoch, card);
+        };
+    };
+    if (!worker) {
+        qt::invoke(this, answer(Card()), Qt::QueuedConnection);
+        return;
+    }
     Worker *target = worker;
-    PluginHost *host = this;
+    std::shared_ptr<Shared> state = shared;
     qt::invoke(
             worker,
-            [target, host, request, lookup] {
+            [target, state, lookup, answer] {
                 const Card card = target->lookup(lookup);
-                // The destructor joins this thread before `host` is freed, and Qt drops
-                // the queued reply when `host` is destroyed.
-                qt::invoke(
-                        host,
-                        [host, request, epoch = lookup.epoch, card] {
-                            const Reply reply = host->pending.take(request);
-                            if (!host->closing && reply)
-                                reply(epoch, card);
-                        },
-                        Qt::QueuedConnection);
+                // Qt drops a queued reply when the host is destroyed; the lock keeps the
+                // host from being destroyed while the reply is posted.
+                QMutexLocker lock(&state->mutex);
+                if (state->host)
+                    qt::invoke(state->host, answer(card), Qt::QueuedConnection);
             },
             Qt::QueuedConnection);
 }

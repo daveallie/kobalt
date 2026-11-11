@@ -66,20 +66,21 @@ void inEvent(Work work)
     require(waitFor([&] { return done; }), "A queued test step never ran");
 }
 
-std::unique_ptr<PluginHost> open(PluginHost::Directory directory)
+std::unique_ptr<PluginHost> open(PluginHost::Directory directory, int joinLimitMs = 2000)
 {
     std::unique_ptr<PluginHost> host;
     inEvent([&] {
         host.reset(new PluginHost(
                 std::move(directory), Context(),
-                { QStringLiteral("id"), QStringLiteral("Wolf Hall"), QStringLiteral("en") }));
+                { QStringLiteral("id"), QStringLiteral("Wolf Hall"), QStringLiteral("en") },
+                joinLimitMs));
     });
     return host;
 }
 
-std::unique_ptr<PluginHost> open(const QString &directory)
+std::unique_ptr<PluginHost> open(const QString &directory, int joinLimitMs = 2000)
 {
-    return open([directory] { return directory; });
+    return open([directory] { return directory; }, joinLimitMs);
 }
 
 void close(std::unique_ptr<PluginHost> &host)
@@ -128,7 +129,7 @@ struct Events
 {
     QMutex mutex;
     QStringList lines;
-    std::atomic_bool looping{ false };
+    std::atomic_bool looping{ false }, closed{ false }, sorting{ false };
 
     QStringList take()
     {
@@ -256,6 +257,44 @@ void destroyWhileRunning(Events &events)
     require(!answer->replied, "A lookup replied after its host was destroyed");
 }
 
+void closeRunsBookClosed(Events &events)
+{
+    events.closed = false;
+    auto host = open(fixture("closing"));
+    require(waitFor([&] { return host->skipsLookups(); }), "The closing fixture never opened");
+    close(host);
+    require(events.closed, "Destroying the host did not run book_closed");
+    require(PluginHost::detachedThreads() == 0, "A host that joined left a thread behind");
+}
+
+void hungCloseDetaches(Events &events)
+{
+    events.take();
+    events.sorting = false;
+    auto host = open(fixture("hang"), 1);
+    require(waitFor([&] { return host->skipsLookups(); }), "The hang fixture never opened");
+    QElapsedTimer elapsed;
+    elapsed.start();
+    close(host);
+    require(elapsed.elapsed() < 1000, "Destroying a host with a hung book_closed did not return");
+    require(PluginHost::detachedThreads() == 1, "The hung plugin thread was not left running");
+    require(events.take().filter("plugin-hang").size() == 1, "The hang was not logged");
+
+    auto next = open(fixture("single"));
+    require(next->skipsLookups(),
+            "A host opened beside a hung thread did not start with plugins off");
+    require(answered(*next).isEmpty(), "A host with plugins off returned a card");
+    close(next);
+    require(events.take().filter("plugins-off").size() == 1, "Plugins off was not logged");
+
+    require(waitFor([] { return PluginHost::detachedThreads() == 0; }),
+            "The detached plugin thread never finished");
+    require(events.sorting, "The detached thread did not run book_closed");
+    auto after = open(fixture("single"));
+    require(answered(*after).title == "Cromwell", "Plugins stayed off after the hung thread ended");
+    close(after);
+}
+
 void replyOnMainThread()
 {
     auto host = open(fixture("single"));
@@ -277,9 +316,14 @@ int main(int argc, char **argv)
     Events events;
     setDiagnosticObserver([&](const QJsonObject &event) {
         const QString name = event.value("event").toString();
-        if (name == "plugin-log" && event.value("message").toString().endsWith("looping"))
+        const QString message = event.value("message").toString();
+        if (name == "plugin-log" && message.endsWith("looping"))
             events.looping = true;
-        if (!name.startsWith("plugin-"))
+        if (name == "plugin-log" && message.endsWith("closed"))
+            events.closed = true;
+        if (name == "plugin-log" && message.endsWith("sorting"))
+            events.sorting = true;
+        if (!name.startsWith("plugin"))
             return;
         QMutexLocker lock(&events.mutex);
         events.lines.append(name + ' ' + event.value("folder").toString() + ' '
@@ -299,6 +343,8 @@ int main(int argc, char **argv)
     queuedBehindSlowOpen();
     destroyWhileRunning(events);
     replyOnMainThread();
+    closeRunsBookClosed(events);
+    hungCloseDetaches(events);
 
     setDiagnosticObserver({});
     std::puts("PASS: plugin host order, fallthrough, discovery, folder resolution, skipping, "
