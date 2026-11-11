@@ -11,6 +11,7 @@
 #include <QJsonParseError>
 #include <QJsonValue>
 #include <cmath>
+#include <cstdlib>
 #include <lua.hpp>
 
 namespace kobalt::plugins {
@@ -51,15 +52,6 @@ bool readBytes(const QString &path, QByteArray *data)
         return false;
     *data = file.readAll();
     return true;
-}
-
-void pushBytesOrNil(lua_State *state, const QString &path)
-{
-    QByteArray data;
-    if (readBytes(path, &data))
-        lua_pushlstring(state, data.constData(), size_t(data.size()));
-    else
-        lua_pushnil(state);
 }
 
 bool pushJson(lua_State *state, const QJsonValue &value, int depth);
@@ -116,36 +108,6 @@ bool pushJson(lua_State *state, const QJsonValue &value, int depth)
     }
 }
 
-int jsonDecode(lua_State *state)
-{
-    size_t length = 0;
-    const char *data = luaL_checklstring(state, 1, &length);
-    bool decoded = false;
-    {
-        QJsonParseError parse;
-        const QJsonDocument document =
-                QJsonDocument::fromJson(QByteArray(data, int(length)), &parse);
-        lua_settop(state, 0);
-        if (parse.error != QJsonParseError::NoError) {
-            lua_pushnil(state);
-            push(state,
-                 parse.errorString() + QStringLiteral(" at offset ")
-                         + QString::number(parse.offset));
-            return 2;
-        }
-        decoded = document.isArray() ? pushJsonArray(state, document.array(), 0)
-                                     : pushJsonObject(state, document.object(), 0);
-    }
-    if (!decoded) {
-        lua_settop(state, 0);
-        lua_pushnil(state);
-        lua_pushliteral(state, "JSON is nested too deeply");
-        return 2;
-    }
-    lua_settop(state, 1);
-    return 1;
-}
-
 // load() that accepts only text chunks; the original is upvalue 1.
 int textLoad(lua_State *state)
 {
@@ -188,33 +150,33 @@ void openLibraries(lua_State *state)
 }
 } // namespace
 
-std::optional<Manifest> readManifest(const QString &directory, QString *error)
+bool readManifest(const QString &directory, Manifest *out, QString *error)
 {
     const QDir folder(directory);
     const QString manifestPath = folder.filePath(QStringLiteral("plugin.json"));
     QByteArray data;
     if (!readBytes(manifestPath, &data)) {
         *error = QStringLiteral("cannot read ") + manifestPath;
-        return std::nullopt;
+        return false;
     }
     QJsonParseError parse;
     const QJsonDocument document = QJsonDocument::fromJson(data, &parse);
     if (parse.error != QJsonParseError::NoError || !document.isObject()) {
         *error = manifestPath + QStringLiteral(" is not a JSON object: ") + parse.errorString();
-        return std::nullopt;
+        return false;
     }
     const QJsonObject object = document.object();
     Manifest manifest;
     manifest.id = object.value(QStringLiteral("id")).toString();
     if (manifest.id.isEmpty()) {
         *error = manifestPath + QStringLiteral(" has no id");
-        return std::nullopt;
+        return false;
     }
     const QJsonValue api = object.value(QStringLiteral("api"));
     if (!api.isDouble() || api.toDouble() != 1) {
         *error = QStringLiteral("plugin ") + manifest.id
                 + QStringLiteral(" needs an unsupported API version");
-        return std::nullopt;
+        return false;
     }
     manifest.api = 1;
     manifest.name = object.value(QStringLiteral("name")).toString(manifest.id);
@@ -222,17 +184,20 @@ std::optional<Manifest> readManifest(const QString &directory, QString *error)
     manifest.directory = folder.absolutePath();
     if (!QFileInfo(folder.filePath(QStringLiteral("main.lua"))).isFile()) {
         *error = QStringLiteral("plugin ") + manifest.id + QStringLiteral(" has no main.lua");
-        return std::nullopt;
+        return false;
     }
-    return manifest;
+    *out = manifest;
+    return true;
 }
 
-LuaPlugin::LuaPlugin(Manifest manifest, Context context, int instructionBudget)
+LuaPlugin::LuaPlugin(Manifest manifest, Context context, int instructionBudget,
+                     std::size_t memoryCap)
     : pluginManifest(std::move(manifest)),
       context(std::move(context)),
       root(QFileInfo(pluginManifest.directory).canonicalFilePath()),
       tickLimit(qMax(1, instructionBudget / hookInterval))
 {
+    memory.cap = memoryCap;
 }
 
 LuaPlugin::~LuaPlugin()
@@ -254,6 +219,95 @@ QString LuaPlugin::failure(const QString &message) const
 LuaPlugin *LuaPlugin::owner(lua_State *state)
 {
     return *static_cast<LuaPlugin **>(lua_getextraspace(state));
+}
+
+// The cap applies only while plugin code runs, so host pushes outside lua_pcall cannot panic.
+void *LuaPlugin::allocate(void *memory, void *block, std::size_t oldSize, std::size_t newSize)
+{
+    auto *usage = static_cast<Memory *>(memory);
+    if (!block)
+        oldSize = 0;
+    if (newSize == 0) {
+        std::free(block);
+        usage->used -= oldSize;
+        return nullptr;
+    }
+    if (usage->enforce && newSize > oldSize && usage->used - oldSize + newSize > usage->cap)
+        return nullptr;
+    void *result = std::realloc(block, newSize);
+    if (result)
+        usage->used = usage->used - oldSize + newSize;
+    return result;
+}
+
+std::size_t LuaPlugin::memoryLeft(lua_State *state)
+{
+    const Memory &usage = owner(state)->memory;
+    return usage.used < usage.cap ? usage.cap - usage.used : 0;
+}
+
+// Host pushes run uncapped after a size check, because a Lua memory error here
+// would unwind past C++ destructors.
+int LuaPlugin::pushFile(lua_State *state, const QString &path)
+{
+    QByteArray data;
+    if (!readBytes(path, &data)) {
+        lua_pushnil(state);
+        return 1;
+    }
+    if (std::size_t(data.size()) + 1024 > memoryLeft(state)) {
+        lua_pushnil(state);
+        lua_pushliteral(state, "the file exceeds the plugin memory limit");
+        return 2;
+    }
+    Memory &usage = owner(state)->memory;
+    usage.enforce = false;
+    lua_pushlstring(state, data.constData(), size_t(data.size()));
+    usage.enforce = true;
+    return 1;
+}
+
+int LuaPlugin::jsonDecode(lua_State *state)
+{
+    size_t length = 0;
+    const char *data = luaL_checklstring(state, 1, &length);
+    if (length * 4 > memoryLeft(state)) {
+        lua_pushnil(state);
+        lua_pushliteral(state, "JSON exceeds the plugin memory limit");
+        return 2;
+    }
+    Memory &usage = owner(state)->memory;
+    bool decoded = false;
+    {
+        QJsonParseError parse;
+        const QJsonDocument document =
+                QJsonDocument::fromJson(QByteArray(data, int(length)), &parse);
+        lua_settop(state, 0);
+        if (parse.error != QJsonParseError::NoError) {
+            lua_pushnil(state);
+            push(state,
+                 parse.errorString() + QStringLiteral(" at offset ")
+                         + QString::number(parse.offset));
+            return 2;
+        }
+        usage.enforce = false;
+        decoded = document.isArray() ? pushJsonArray(state, document.array(), 0)
+                                     : pushJsonObject(state, document.object(), 0);
+        usage.enforce = true;
+    }
+    const bool fits = usage.used <= usage.cap;
+    if (!decoded || !fits) {
+        lua_settop(state, 0);
+        lua_gc(state, LUA_GCCOLLECT);
+        lua_pushnil(state);
+        if (fits)
+            lua_pushliteral(state, "JSON is nested too deeply");
+        else
+            lua_pushliteral(state, "JSON exceeds the plugin memory limit");
+        return 2;
+    }
+    lua_settop(state, 1);
+    return 1;
 }
 
 void LuaPlugin::countHook(lua_State *state, lua_Debug *)
@@ -279,11 +333,11 @@ int LuaPlugin::readFile(lua_State *state)
         if (info.isFile() && canonical.startsWith(plugin->root + QLatin1Char('/')))
             path = canonical;
     }
-    if (path.isEmpty())
+    if (path.isEmpty()) {
         lua_pushnil(state);
-    else
-        pushBytesOrNil(state, path);
-    return 1;
+        return 1;
+    }
+    return pushFile(state, path);
 }
 
 int LuaPlugin::readSidecar(lua_State *state)
@@ -299,11 +353,11 @@ int LuaPlugin::readSidecar(lua_State *state)
         const QFileInfo book(plugin->context.bookFile);
         path = book.path() + QLatin1Char('/') + book.completeBaseName() + QLatin1Char('.') + suffix;
     }
-    if (path.isEmpty() || !QFileInfo(path).isFile())
+    if (path.isEmpty() || !QFileInfo(path).isFile()) {
         lua_pushnil(state);
-    else
-        pushBytesOrNil(state, path);
-    return 1;
+        return 1;
+    }
+    return pushFile(state, path);
 }
 
 int LuaPlugin::log(lua_State *state)
@@ -331,7 +385,9 @@ bool LuaPlugin::load(QString *error)
         *error = failure(QStringLiteral("its folder is missing"));
         return false;
     }
-    state = luaL_newstate();
+    memory.used = 0;
+    memory.enforce = false;
+    state = lua_newstate(allocate, &memory);
     if (!state) {
         *error = failure(QStringLiteral("cannot create a Lua state"));
         return false;
@@ -383,7 +439,9 @@ bool LuaPlugin::call(int arguments, int results, QString *error)
 {
     ticks = 0;
     lua_sethook(state, countHook, LUA_MASKCOUNT, hookInterval);
+    memory.enforce = true;
     const int status = lua_pcall(state, arguments, results, 0);
+    memory.enforce = false;
     lua_sethook(state, nullptr, 0, 0);
     if (status == LUA_OK)
         return true;
@@ -417,10 +475,9 @@ bool LuaPlugin::bookClosed(QString *error)
     return call(0, 0, error);
 }
 
-bool LuaPlugin::beforeLookup(const Lookup &lookup, const Book &book, std::optional<Card> *card,
-                             QString *error)
+bool LuaPlugin::beforeLookup(const Lookup &lookup, const Book &book, Card *card, QString *error)
 {
-    card->reset();
+    *card = Card();
     if (!state) {
         *error = failure(QStringLiteral("is not loaded"));
         return false;

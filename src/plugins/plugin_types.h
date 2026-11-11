@@ -18,6 +18,8 @@ struct Position
 struct Card
 {
     QString title, html, footer;
+
+    bool isEmpty() const { return title.isEmpty(); }
 };
 
 struct Lookup

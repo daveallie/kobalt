@@ -18,11 +18,12 @@ QString fixture(const QString &name)
 Manifest manifest(const QString &directory)
 {
     QString error;
-    const auto result = readManifest(directory, &error);
-    if (!result)
+    Manifest result;
+    const bool ok = readManifest(directory, &result, &error);
+    if (!ok)
         std::fprintf(stderr, "%s\n", qPrintable(error));
-    require(result.has_value(), "A fixture manifest did not load");
-    return *result;
+    require(ok, "A fixture manifest did not load");
+    return result;
 }
 
 Book book()
@@ -40,9 +41,9 @@ Lookup lookup(const QString &word)
 }
 
 // Runs before_lookup; `ok` and `error` describe the call.
-std::optional<Card> ask(LuaPlugin &plugin, const QString &word, bool *ok, QString *error = nullptr)
+Card ask(LuaPlugin &plugin, const QString &word, bool *ok, QString *error = nullptr)
 {
-    std::optional<Card> card;
+    Card card;
     QString message;
     *ok = plugin.beforeLookup(lookup(word), book(), &card, &message);
     if (error)
@@ -57,8 +58,8 @@ QString askHtml(LuaPlugin &plugin, const QString &word)
     const auto card = ask(plugin, word, &ok, &error);
     if (!ok)
         std::fprintf(stderr, "%s\n", qPrintable(error));
-    require(ok && card.has_value(), "before_lookup did not return a card");
-    return card->html;
+    require(ok && !card.isEmpty(), "before_lookup did not return a card");
+    return card.html;
 }
 
 void loaded(LuaPlugin &plugin)
@@ -157,7 +158,7 @@ void budgetAbort()
     bool ok = true;
     QString error;
     const auto card = ask(plugin, "word", &ok, &error);
-    require(!ok && !card, "An endless loop did not fail");
+    require(!ok && card.isEmpty(), "An endless loop did not fail");
     require(timer.elapsed() < 1000, "The budget did not stop the loop within a second");
     require(error.contains("budget"), "The error does not mention the budget");
 
@@ -189,7 +190,7 @@ void errorIsFailure()
     bool ok = true;
     QString error;
     const auto card = ask(plugin, "word", &ok, &error);
-    require(!ok && !card, "A Lua error was not a failure");
+    require(!ok && card.isEmpty(), "A Lua error was not a failure");
     require(error.contains("x marks the failure"), "The error lost the Lua message");
     require(error.contains("plugin error"), "The error does not name the plugin");
 }
@@ -204,7 +205,7 @@ void malformedCardIsFailure()
         const auto card = ask(plugin, reply, &ok, &error);
         if (ok)
             std::fprintf(stderr, "Reply %s was accepted\n", reply);
-        require(!ok && !card && !error.isEmpty(), "A malformed card was not a failure");
+        require(!ok && card.isEmpty() && !error.isEmpty(), "A malformed card was not a failure");
     }
 }
 
@@ -214,7 +215,7 @@ void nilIsNoCard()
     loaded(plugin);
     bool ok = false;
     const auto card = ask(plugin, "word", &ok);
-    require(ok && !card, "nil was not a successful call without a card");
+    require(ok && card.isEmpty(), "nil was not a successful call without a card");
 }
 
 void missingHooksSucceed()
@@ -238,8 +239,8 @@ void utf8RoundTrip()
     const QString word = QString::fromUtf8("Zo\xc3\xab\xe2\x80\x99s");
     bool ok = false;
     const auto card = ask(plugin, word, &ok);
-    require(ok && card && card->title == word, "The word did not round-trip through Lua");
-    require(card->footer == "echo", "The footer was lost");
+    require(ok && card.title == word, "The word did not round-trip through Lua");
+    require(card.footer == "echo", "The footer was lost");
 }
 
 void ctxShape()
@@ -255,6 +256,21 @@ void ctxShape()
     require(askHtml(plugin, "word").endsWith("|nil"), "book_closed did not run");
 }
 
+void memoryCap()
+{
+    require(defaultMemoryCap == 32 * 1024 * 1024, "The default memory cap is not 32 MiB");
+    LuaPlugin plugin(manifest(fixture("memory_cap")), { }, defaultInstructionBudget, 1024 * 1024);
+    loaded(plugin);
+    bool ok = true;
+    QString error;
+    const auto card = ask(plugin, "grow", &ok, &error);
+    require(!ok && card.isEmpty(), "Growing past the memory cap did not fail");
+    require(error.contains("not enough memory"), "The error does not report the memory limit");
+    require(askHtml(plugin, "word") == "ok", "The plugin did not recover after the memory error");
+    require(askHtml(plugin, "json").contains("memory limit"),
+            "Large JSON was decoded past the memory cap");
+}
+
 void manifestValidation()
 {
     const auto valid = manifest(fixture("echo"));
@@ -263,10 +279,11 @@ void manifestValidation()
     require(QDir(valid.directory) == QDir(fixture("echo")), "The manifest folder is wrong");
     for (const char *name : { "api_two", "missing_id", "invalid_json", "missing_main", "absent" }) {
         QString error;
-        const auto result = readManifest(fixture(name), &error);
-        if (result)
+        Manifest result;
+        const bool ok = readManifest(fixture(name), &result, &error);
+        if (ok)
             std::fprintf(stderr, "Manifest %s was accepted\n", name);
-        require(!result && !error.isEmpty(), "An invalid plugin was accepted");
+        require(!ok && !error.isEmpty(), "An invalid plugin was accepted");
     }
 }
 } // namespace
@@ -285,6 +302,7 @@ int main()
     missingHooksSucceed();
     utf8RoundTrip();
     ctxShape();
+    memoryCap();
     manifestValidation();
     puts("PASS: Lua plugins run in a sandbox");
 }

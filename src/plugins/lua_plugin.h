@@ -2,7 +2,7 @@
 #include "plugin_types.h"
 
 #include <QString>
-#include <optional>
+#include <cstddef>
 
 struct lua_State;
 struct lua_Debug;
@@ -14,8 +14,11 @@ struct Manifest
     int api = 0;
 };
 
-// Null on a missing or invalid plugin.json or main.lua; `error` says why.
-std::optional<Manifest> readManifest(const QString &directory, QString *error);
+// False on a missing or invalid plugin.json or main.lua; `error` says why.
+bool readManifest(const QString &directory, Manifest *out, QString *error);
+
+constexpr int defaultInstructionBudget = 5'000'000;
+constexpr std::size_t defaultMemoryCap = 32 * 1024 * 1024;
 
 struct Context
 {
@@ -28,7 +31,8 @@ struct Context
 class LuaPlugin
 {
 public:
-    LuaPlugin(Manifest manifest, Context context, int instructionBudget = 5'000'000);
+    LuaPlugin(Manifest manifest, Context context, int instructionBudget = defaultInstructionBudget,
+              std::size_t memoryCap = defaultMemoryCap);
     ~LuaPlugin();
     LuaPlugin(const LuaPlugin &) = delete;
     LuaPlugin &operator=(const LuaPlugin &) = delete;
@@ -36,16 +40,25 @@ public:
     bool load(QString *error); // runs main.lua
     bool bookOpened(const Book &book, QString *error);
     bool bookClosed(QString *error);
-    // false = failure (error/budget/bad type); true with nullopt = no card
-    bool beforeLookup(const Lookup &lookup, const Book &book, std::optional<Card> *card,
-                      QString *error);
+    // false = failure (error/budget/memory/bad type); true with an empty card = no card
+    bool beforeLookup(const Lookup &lookup, const Book &book, Card *card, QString *error);
     const Manifest &manifest() const;
 
 private:
+    struct Memory
+    {
+        std::size_t used = 0, cap = 0;
+        bool enforce = false;
+    };
+
     bool pushHook(const char *name);
     bool call(int arguments, int results, QString *error);
     QString failure(const QString &message) const;
     static void countHook(lua_State *state, lua_Debug *);
+    static void *allocate(void *memory, void *block, std::size_t oldSize, std::size_t newSize);
+    static std::size_t memoryLeft(lua_State *state);
+    static int pushFile(lua_State *state, const QString &path);
+    static int jsonDecode(lua_State *state);
     static int readFile(lua_State *state);
     static int readSidecar(lua_State *state);
     static int log(lua_State *state);
@@ -56,6 +69,7 @@ private:
     QString root;
     int tickLimit;
     int ticks = 0;
+    Memory memory;
     lua_State *state = nullptr;
 };
 } // namespace kobalt::plugins
