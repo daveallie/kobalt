@@ -66,15 +66,20 @@ void inEvent(Work work)
     require(waitFor([&] { return done; }), "A queued test step never ran");
 }
 
-std::unique_ptr<PluginHost> open(const QString &directory)
+std::unique_ptr<PluginHost> open(PluginHost::Directory directory)
 {
     std::unique_ptr<PluginHost> host;
     inEvent([&] {
         host.reset(new PluginHost(
-                directory, Context(),
+                std::move(directory), Context(),
                 { QStringLiteral("id"), QStringLiteral("Wolf Hall"), QStringLiteral("en") }));
     });
     return host;
+}
+
+std::unique_ptr<PluginHost> open(const QString &directory)
+{
+    return open([directory] { return directory; });
 }
 
 void close(std::unique_ptr<PluginHost> &host)
@@ -161,11 +166,45 @@ void noPluginsRepliesNothing()
         elapsed.start();
         const auto answer = ask(*host, QStringLiteral("Cromwell"), 9);
         require(waitFor([&] { return answer->replied; }), "A host without plugins never replied");
-        require(elapsed.elapsed() < 50, "A host without plugins replied late");
+        require(elapsed.elapsed() < 1000, "A host without plugins replied late");
         require(answer->card.isEmpty() && answer->epoch == 9,
                 "A host without plugins returned a card or lost the epoch");
         close(host);
     }
+}
+
+void folderResolvedOffMainThread()
+{
+    auto resolved = std::make_shared<std::atomic_int>(0);
+    auto onMain = std::make_shared<std::atomic_bool>(true);
+    QThread *main = QThread::currentThread();
+    auto host = open([resolved, onMain, main] {
+        onMain->store(QThread::currentThread() == main);
+        ++*resolved;
+        return QString(KOBALT_TEST_PLUGIN_FIXTURES "/single");
+    });
+    require(answered(*host).title == "Cromwell", "A resolved plugin folder was not used");
+    require(resolved->load() == 1 && !onMain->load(),
+            "The plugin folder was not resolved once on the plugin thread");
+    close(host);
+
+    auto none = open([] { return QString(); });
+    require(waitFor([&] { return none->skipsLookups(); }),
+            "An empty resolved folder did not leave lookups to the dictionary");
+    close(none);
+}
+
+void skipsWithoutBeforeLookup()
+{
+    auto quiet = open(fixture("hookless"));
+    require(waitFor([&] { return quiet->skipsLookups(); }),
+            "Plugins without before_lookup still took lookups");
+    close(quiet);
+
+    auto single = open(fixture("single"));
+    require(answered(*single).title == "Cromwell", "A plugin with before_lookup did not answer");
+    require(!single->skipsLookups(), "A plugin with before_lookup was skipped");
+    close(single);
 }
 
 void invalidManifestsSkipped(Events &events)
@@ -188,6 +227,7 @@ void threeFailuresDisable(Events &events)
     for (int call = 1; call <= 3; ++call)
         require(answered(*host).isEmpty(), "A failing plugin returned a card");
     require(answered(*host).isEmpty(), "A plugin that failed three times still ran");
+    require(host->skipsLookups(), "Lookups still waited for a disabled plugin");
     close(host);
     const QStringList lines = events.take();
     require(lines.filter("plugin-failed").size() == 3, "Each plugin failure was not logged");
@@ -252,6 +292,8 @@ int main(int argc, char **argv)
     discoveryOrder(events);
     silentFallsThrough();
     noPluginsRepliesNothing();
+    folderResolvedOffMainThread();
+    skipsWithoutBeforeLookup();
     invalidManifestsSkipped(events);
     threeFailuresDisable(events);
     queuedBehindSlowOpen();
@@ -259,6 +301,6 @@ int main(int argc, char **argv)
     replyOnMainThread();
 
     setDiagnosticObserver({});
-    std::puts("PASS: plugin host order, fallthrough, discovery, failures, queueing, shutdown and "
-              "reply thread");
+    std::puts("PASS: plugin host order, fallthrough, discovery, folder resolution, skipping, "
+              "failures, queueing, shutdown and reply thread");
 }

@@ -484,7 +484,7 @@ void Reader::buildReadingPage()
             return;
         openDictionary(query, kobalt::ui::PanelTiming("dictionary"));
     };
-    if (!services.pluginDirectory.isEmpty()) {
+    if (services.pluginDirectory) {
         const QUrl source(book->identity());
         kobalt::plugins::Context context;
         context.bookFile = source.isLocalFile() ? source.toLocalFile() : QString();

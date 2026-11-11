@@ -1574,9 +1574,10 @@ void swipeChoices(Fixture &fixture, const QString &name = {})
 std::function<void(ReaderHostServices &)> pluginServices(const QString &folder, int timeout = -1)
 {
     return [folder, timeout](ReaderHostServices &services) {
-        services.pluginDirectory = folder.isEmpty()
-                ? QString()
-                : QStringLiteral(KOBALT_TEST_PLUGIN_FIXTURES) + '/' + folder;
+        services.pluginDirectory = nullptr;
+        if (!folder.isEmpty())
+            services.pluginDirectory = [path = QStringLiteral(KOBALT_TEST_PLUGIN_FIXTURES) + '/'
+                                                + folder] { return path; };
         if (timeout >= 0)
             services.pluginLookupTimeoutMs = timeout;
     };
@@ -7006,7 +7007,7 @@ printf '[{"file":"%s.png","scene":"%s"}]' "$3" "$KOBALT_GALLERY_CAPTURE" > "$2/p
     void pluginNoDirectoryUnchanged()
     {
         QCOMPARE(ReaderHostServices().pluginLookupTimeoutMs, 300);
-        QCOMPARE(ReaderHostServices().pluginDirectory, QString());
+        QVERIFY(!ReaderHostServices().pluginDirectory);
         Fixture fixture(false, false, false, true, false, false, pluginServices({}));
         openPluginBook(fixture);
         auto *page = static_cast<ReadingPage *>(fixture.widget("rrPage"));

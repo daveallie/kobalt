@@ -1910,7 +1910,7 @@ void Reader::lookupSelection()
                 guard->lookupContext = range.context;
                 guard->lookupPosition = range.start;
                 auto *reader = guard.data();
-                if (!reader->plugins) {
+                if (!reader->plugins || reader->plugins->skipsLookups()) {
                     reader->openDictionary(query, timing);
                     return;
                 }

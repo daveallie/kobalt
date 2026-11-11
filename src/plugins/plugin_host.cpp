@@ -25,11 +25,14 @@ void skipped(const QString &folder, const QString &reason)
 class PluginHost::Worker : public QObject
 {
 public:
-    Worker(QString directory, Context context, Book book, const std::atomic_bool *abort)
+    Worker(Directory directory, Context context, Book book, const std::atomic_bool *abort,
+           std::atomic_bool *opened, std::atomic_bool *answers)
         : directory(std::move(directory)),
           context(std::move(context)),
           book(std::move(book)),
-          abort(abort)
+          abort(abort),
+          opened(opened),
+          answers(answers)
     {
     }
 
@@ -47,17 +50,24 @@ private:
     bool stopped() const { return abort->load(std::memory_order_relaxed); }
 
     void fail(Entry &entry, const QString &error);
+    void publish();
 
-    QString directory;
+    Directory directory;
     Context context;
     Book book;
     const std::atomic_bool *abort;
+    std::atomic_bool *opened, *answers;
     std::vector<Entry> plugins;
 };
 
 void PluginHost::Worker::open()
 {
-    QDir root(directory);
+    const QString folder = directory();
+    if (folder.isEmpty()) {
+        publish();
+        return;
+    }
+    QDir root(folder);
     std::vector<Manifest> manifests;
     QSet<QString> ids;
     const auto folders = root.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
@@ -102,6 +112,16 @@ void PluginHost::Worker::open()
         if (!entry.plugin->bookOpened(book, &error))
             fail(entry, error);
     }
+    publish();
+}
+
+void PluginHost::Worker::publish()
+{
+    bool any = false;
+    for (auto &entry : plugins)
+        any = any || (entry.failures < failureLimit && entry.plugin->answersLookups());
+    answers->store(any, std::memory_order_relaxed);
+    opened->store(true, std::memory_order_release);
 }
 
 Card PluginHost::Worker::lookup(const Lookup &lookup)
@@ -140,14 +160,18 @@ void PluginHost::Worker::fail(Entry &entry, const QString &error)
     ++entry.failures;
     diagnostic("plugin-failed", { { "message", error }, { "failures", entry.failures } },
                DiagnosticSeverity::Warning);
-    if (entry.failures == failureLimit)
+    if (entry.failures == failureLimit) {
         diagnostic("plugin-disabled", { { "plugin", entry.plugin->manifest().id } },
                    DiagnosticSeverity::Warning);
+        if (opened->load(std::memory_order_relaxed))
+            publish();
+    }
 }
 
-PluginHost::PluginHost(QString pluginDirectory, Context context, Book book, QObject *parent)
+PluginHost::PluginHost(Directory pluginDirectory, Context context, Book book, QObject *parent)
     : QObject(parent),
-      worker(new Worker(std::move(pluginDirectory), std::move(context), std::move(book), &abort))
+      worker(new Worker(std::move(pluginDirectory), std::move(context), std::move(book), &abort,
+                        &opened, &answers))
 {
     thread.setObjectName(QStringLiteral("plugins"));
     worker->moveToThread(&thread);
@@ -177,6 +201,11 @@ PluginHost::~PluginHost()
         thread.wait();
     }
     delete worker;
+}
+
+bool PluginHost::skipsLookups() const
+{
+    return opened.load(std::memory_order_acquire) && !answers.load(std::memory_order_relaxed);
 }
 
 void PluginHost::lookup(const Lookup &lookup, Reply reply)

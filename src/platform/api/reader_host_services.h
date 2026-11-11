@@ -98,8 +98,9 @@ struct ReaderHostServices
     QStringList sleepOverlayDirectories;
     // Optional live native preferences for the stock sleep-screen preview.
     std::function<sleep::NativePreview()> nativeSleepPreview;
-    // Optional folder of Lua plugins, read on the plugin thread. Empty disables plugins.
-    QString pluginDirectory;
+    // Optional resolver of the Lua plugin folder. It runs on the plugin thread,
+    // so it may touch storage; an unset resolver or an empty result disables plugins.
+    std::function<QString()> pluginDirectory;
     // False where books have no files beside them, so plugins cannot read sidecars.
     bool bookSidecars = true;
     // How long a lookup waits for a plugin card before the dictionary opens; tests shorten it.
