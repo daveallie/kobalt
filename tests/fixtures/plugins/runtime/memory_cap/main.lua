@@ -14,5 +14,8 @@ function before_lookup(ctx)
         local value, message = kobalt.json.decode("[" .. string.rep("[],", 40000) .. "[]]")
         return { title = "json", html = value and "decoded" or message }
     end
+    if ctx.word == "big" then
+        return { title = "big", html = tostring(#string.rep("x", 4000000)) }
+    end
     return { title = "ok", html = "ok" }
 end

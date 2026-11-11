@@ -304,6 +304,16 @@ void memoryCap()
     require(askHtml(plugin, "arrays").contains("memory limit"),
             "Many empty arrays were decoded past the memory cap");
     require(askHtml(plugin, "word") == "ok", "The plugin did not recover after large JSON");
+
+    LuaPlugin stopping(manifest(fixture("memory_cap")), { });
+    std::atomic_bool abort{ false };
+    stopping.setAbort(&abort);
+    loaded(stopping);
+    require(askHtml(stopping, "big") == "4000000", "A large allocation failed while running");
+    abort = true;
+    ask(stopping, "big", &ok, &error);
+    require(!ok && error.contains("not enough memory"),
+            "A stopped plugin grew its memory before the next budget check");
 }
 
 void finalizerRejected()
@@ -422,6 +432,21 @@ void manifestValidation()
             std::fprintf(stderr, "Manifest %s was accepted\n", name);
         require(!ok && !error.isEmpty(), "An invalid plugin was accepted");
     }
+
+    QTemporaryDir temporary;
+    require(temporary.isValid(), "No temporary folder");
+    require(QFile::copy(fixture("echo/main.lua"), temporary.path() + "/main.lua"),
+            "The script was not copied");
+    QByteArray large = "{ \"id\": \"large\", \"api\": 1";
+    large += QByteArray(1024 * 1024, ' ');
+    large += "}";
+    write(temporary.path() + "/plugin.json", large);
+    QString error;
+    Manifest result;
+    require(!readManifest(temporary.path(), &result, &error) && error.startsWith("too large"),
+            "A plugin.json over 1 MiB was accepted");
+    write(temporary.path() + "/plugin.json", "{ \"id\": \"large\", \"api\": 1 }");
+    require(readManifest(temporary.path(), &result, &error), "A small plugin.json was refused");
 }
 } // namespace
 

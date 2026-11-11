@@ -46,13 +46,15 @@ public:
     // True when main.lua defined before_lookup.
     bool answersLookups();
     const Manifest &manifest() const;
-    // While *abort is true, a running hook stops at its next budget check and fails.
+    // While *abort is true, a running hook stops at its next budget check and
+    // cannot grow its memory, so it fails.
     void setAbort(const std::atomic_bool *abort);
 
     struct Memory
     {
         std::size_t used = 0, cap = 0;
         bool enforce = false;
+        const std::atomic_bool *abort = nullptr;
     };
 
 private:

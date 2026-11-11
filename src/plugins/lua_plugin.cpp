@@ -252,6 +252,7 @@ const Manifest &LuaPlugin::manifest() const
 void LuaPlugin::setAbort(const std::atomic_bool *value)
 {
     abort = value;
+    memory.abort = value;
 }
 
 QString LuaPlugin::failure(const QString &message) const
@@ -275,7 +276,10 @@ void *LuaPlugin::allocate(void *memory, void *block, std::size_t oldSize, std::s
         usage->used -= oldSize;
         return nullptr;
     }
-    if (usage->enforce && newSize > oldSize && usage->used - oldSize + newSize > usage->cap)
+    // One instruction can copy up to the cap, so a stopped plugin may not grow at all.
+    if (usage->enforce && newSize > oldSize
+        && (usage->used - oldSize + newSize > usage->cap
+            || (usage->abort && usage->abort->load(std::memory_order_relaxed))))
         return nullptr;
     void *result = std::realloc(block, newSize);
     if (result)
