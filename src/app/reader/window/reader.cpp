@@ -1924,9 +1924,13 @@ void Reader::lookupSelection()
                         lookup, [guard, timing](quint64 replied, kobalt::plugins::Card card) {
                             if (!guard)
                                 return;
-                            ++guard->pluginReplies;
+                            guard->setProperty("reader_plugin_replies",
+                                               guard->property("reader_plugin_replies").toInt()
+                                                       + 1);
                             guard->finishPluginLookup(replied, card, timing);
                         });
+                reader->setProperty("reader_plugin_requests",
+                                    reader->property("reader_plugin_requests").toInt() + 1);
                 kobalt::qt::later(reader->services.pluginLookupTimeoutMs, reader,
                                   [guard, epoch, timing] {
                                       if (guard)
@@ -1939,9 +1943,13 @@ void Reader::lookupSelection()
 void Reader::finishPluginLookup(quint64 epoch, const kobalt::plugins::Card &card,
                                 kobalt::ui::PanelTiming timing)
 {
-    if (lookupEpoch != epoch || !lookupPending || lifecycleHidden || services.suspended()
-        || closing)
+    if (lookupEpoch != epoch || !lookupPending || closing)
         return;
+    // Suspension alone dismisses nothing; end the lookup as closing the sheet does.
+    if (lifecycleHidden || services.suspended()) {
+        dismissDictionary();
+        return;
+    }
     lookupPending = false;
     timing.stage("plugins");
     if (card.isEmpty()) {
@@ -3350,7 +3358,6 @@ void Reader::save(bool snapshot, bool background, bool persist)
     state["appearance_preview_pending"] =
             previewPageRequested != 0 && previewPageKey != previewPageRequested;
     state["annotation_dragging"] = annotationDrag.active();
-    state["plugin_replies"] = pluginReplies;
     state["bookmarked"] = page->bookmarked;
     state["bookmark_count"] = bookmarks->available() ? int(bookmarks->bookmarks().size()) : -1;
     state["bookmark_pages"] = [this] {

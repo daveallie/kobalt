@@ -338,6 +338,8 @@
 "dictionary_panel.edit_hint" = "Update the word or phrase to look up in the dictionary.";
 /* Arguments: %1 */
 "dictionary_panel.definition_for" = "Definition for %1";
+/* Arguments: %1 */
+"dictionary_panel.plugin_card_for" = "Plugin card for %1";
 "dictionary_panel.dictionary_unavailable" = "Dictionary unavailable";
 
 /* error */

@@ -147,7 +147,7 @@ DictionaryPanel::DictionaryPanel(QWidget *parent, KeyboardFactory makeKeyboard)
     actions->setAccessibleName(strings::get("dictionary_panel.actions"));
     actions->hide();
     connect(actions, &QPushButton::clicked, this, [this] { openActions(); });
-    pluginLookup = new ui::CellButton(ui::ControlIcon::Dictionaries, this);
+    pluginLookup = new ui::CellButton(ui::ControlIcon::Dictionary, this);
     pluginLookup->setObjectName("rrDictionaryPluginLookup");
     pluginLookup->setAccessibleName(strings::get("dictionary_panel.open_dictionary"));
     pluginLookup->setRule(Qt::LeftEdge);
@@ -347,7 +347,7 @@ void DictionaryPanel::openCard(const QString &word, const plugins::Card &card,
     finishEditing(false);
     showingCard = true;
     cardWord = word.simplified();
-    setAccessibleName(card.title);
+    setAccessibleName(strings::get("dictionary_panel.plugin_card_for").arg(card.title));
     setHeadword(card.title);
     dropdown->hide();
     definitionHtml = formatDefinition(card.html);

@@ -1623,8 +1623,45 @@ bool dictionaryShown(Fixture &fixture)
 
 int pluginReplies(Fixture &fixture)
 {
-    return fixture.state().value("plugin_replies").toInt();
+    auto *reader = fixture.window.readerWindow();
+    return reader ? reader->property("reader_plugin_replies").toInt() : 0;
 }
+
+// Runs `posted` once, synchronously, as soon as the reader has posted a lookup
+// to its plugins. The reply is a queued main-thread call, so it cannot arrive first.
+class PluginRequestWatch final : public QObject
+{
+public:
+    PluginRequestWatch(QObject *reader, std::function<void()> posted)
+        : reader(reader), posted(std::move(posted))
+    {
+        reader->installEventFilter(this);
+    }
+
+    ~PluginRequestWatch() override
+    {
+        if (reader)
+            reader->removeEventFilter(this);
+    }
+
+    bool fired = false;
+
+protected:
+    bool eventFilter(QObject *object, QEvent *event) override
+    {
+        if (!fired && object == reader && event->type() == QEvent::DynamicPropertyChange
+            && static_cast<QDynamicPropertyChangeEvent *>(event)->propertyName()
+                    == "reader_plugin_requests") {
+            fired = true;
+            posted();
+        }
+        return false;
+    }
+
+private:
+    QPointer<QObject> reader;
+    std::function<void()> posted;
+};
 
 // An early review image of the reader, rendered as the gallery renders it.
 bool saveReaderImage(Fixture &fixture, const QString &directory, const QString &name)
@@ -6862,25 +6899,58 @@ printf '[{"file":"%s.png","scene":"%s"}]' "$3" "$KOBALT_GALLERY_CAPTURE" > "$2/p
         QCOMPARE(headword->text(), word);
     }
 
-    // Checks that a plugin reply arriving after the lookup was dismissed and the page turned shows nothing.
+    // Checks that a card arriving after the pending lookup was dismissed by a page tap shows nothing.
     void pluginReplyAfterPageTurnDropped()
     {
-        Fixture fixture(false, false, false, true, false, false, pluginServices("slow", 1));
+        Fixture fixture(false, false, false, true, false, false, pluginServices("slow", 10000));
         openPluginBook(fixture);
         auto *page = static_cast<ReadingPage *>(fixture.widget("rrPage"));
         auto *reader = fixture.window.readerWindow();
-        QVERIFY(fixture.selectWord(page, fixture.wordPoint()));
-        QTRY_VERIFY(dictionaryShown(fixture));
-        auto *dictionary = fixture.widget("rrDictionary");
-        const int y = dictionary->y() > 0 ? dictionary->y() - ui::px(24)
-                                          : dictionary->geometry().bottom() + ui::px(24);
-        QVERIFY(fixture.click(page, page->mapFrom(reader, QPoint(9 * reader->width() / 10, y))));
-        QTRY_VERIFY(!fixture.visible("rrDictionary"));
-        QVERIFY(fixture.turnPage(1));
+        const auto word = fixture.wordPoint();
+        const QPoint tap(9 * page->width() / 10, page->height() / 2);
+        QVERIFY(!page->annotationContains(tap - QPoint(0, page->topHeight())));
+        bool tapped = false;
+        PluginRequestWatch watch(reader, [&] {
+            QCOMPARE(pluginReplies(fixture), 0);
+            tapped = fixture.click(page, tap);
+        });
+        QVERIFY(fixture.selectWord(page, word));
+        QTRY_VERIFY(watch.fired);
+        QVERIFY(tapped);
         QTRY_COMPARE(pluginReplies(fixture), 1);
         QCoreApplication::processEvents();
         QVERIFY(!fixture.visible("rrDictionary"));
         QVERIFY(!fixture.visible("rrDictionaryPluginLookup"));
+        // The lookup no longer holds page turns back.
+        QVERIFY(fixture.turnPage(1));
+        QVERIFY(!fixture.visible("rrDictionary"));
+    }
+
+    // Checks that suspending the app while plugins answer cancels the lookup instead of stranding it.
+    void pluginSuspendCancelsLookup()
+    {
+        auto suspended = std::make_shared<bool>(false);
+        Fixture fixture(false, false, false, true, false, false,
+                        [suspended](ReaderHostServices &services) {
+                            pluginServices("card", 10000)(services);
+                            services.suspended = [suspended, host = services.suspended] {
+                                return *suspended || (host && host());
+                            };
+                        });
+        openPluginBook(fixture);
+        auto *page = static_cast<ReadingPage *>(fixture.widget("rrPage"));
+        auto *reader = fixture.window.readerWindow();
+        const auto word = fixture.wordPoint();
+        PluginRequestWatch watch(reader, [suspended] { *suspended = true; });
+        QVERIFY(fixture.selectWord(page, word));
+        QTRY_VERIFY(watch.fired);
+        QTRY_COMPARE(pluginReplies(fixture), 1);
+        *suspended = false;
+        QCoreApplication::processEvents();
+        QVERIFY(!fixture.visible("rrDictionary"));
+        QVERIFY(!page->annotationContains(word - QPoint(0, page->topHeight())));
+        QVERIFY(fixture.turnPage(1));
+        QVERIFY(!fixture.visible("rrDictionary"));
     }
 
     void pluginCardDismissal_data()

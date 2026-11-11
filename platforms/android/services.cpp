@@ -6,6 +6,7 @@
 #include "runtime.h"
 #include "light.h"
 #include "ui/style/fonts.h"
+#include "support/main_thread.h"
 #include <QCoreApplication>
 #include <QGuiApplication>
 #include <QDesktopServices>
@@ -50,6 +51,25 @@ public:
 
     void acceptHandoff(QDialog &, const std::function<void()> &accept) override { accept(); }
 };
+
+// Empty when shared storage is unavailable, which leaves plugins off.
+const QString &externalFiles()
+{
+    static const QString path = [] {
+        // The first call builds the start screen, before any screen takes input.
+        mainthread::AllowBlocking allow("android startup");
+        // getExternalFilesDir creates the folder when it is missing.
+        mainthread::blocking("android external files");
+        const QJniObject application = QNativeInterface::QAndroidApplication::context();
+        const auto folder = application.callObjectMethod("getExternalFilesDir",
+                                                         "(Ljava/lang/String;)Ljava/io/File;",
+                                                         static_cast<jstring>(nullptr));
+        return folder.isValid()
+                ? folder.callObjectMethod("getAbsolutePath", "()Ljava/lang/String;").toString()
+                : QString();
+    }();
+    return path;
+}
 } // namespace
 
 ReaderHostServices readerHostServices()
@@ -72,15 +92,9 @@ ReaderHostServices readerHostServices()
         result.deviceName = QStringLiteral("Android");
     result.colorDisplay = [] { return true; };
     result.systemRotation = true;
-    const QJniObject application = QNativeInterface::QAndroidApplication::context();
-    const auto externalFiles =
-            application
-                    .callObjectMethod("getExternalFilesDir", "(Ljava/lang/String;)Ljava/io/File;",
-                                      static_cast<jstring>(nullptr))
-                    .callObjectMethod("getAbsolutePath", "()Ljava/lang/String;")
-                    .toString();
-    if (!externalFiles.isEmpty())
-        result.pluginDirectory = externalFiles + "/plugins";
+    const auto &files = externalFiles();
+    if (!files.isEmpty())
+        result.pluginDirectory = files + "/plugins";
     // Android imports books, so no sidecar sits beside them.
     result.bookSidecars = false;
     result.browserAvailable = [] { return true; };

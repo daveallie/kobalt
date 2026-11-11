@@ -683,8 +683,6 @@ private:
     void openDictionary(const QString &query, kobalt::ui::PanelTiming timing);
     // Destroyed in ~Reader, where joining its thread may block.
     std::unique_ptr<kobalt::plugins::PluginHost> plugins;
-    // Every plugin reply, current or stale, for the inspection report.
-    int pluginReplies = 0;
     void finishPluginLookup(quint64 epoch, const kobalt::plugins::Card &card,
                             kobalt::ui::PanelTiming timing);
     void resizeText();
