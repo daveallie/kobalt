@@ -1,3 +1,26 @@
+--- a/src/lgc.c
++++ b/src/lgc.c
+@@ -549,16 +549,11 @@ static lu_mem traversetable (global_State *g, Table *h) {
+        cast_void(weakkey = strchr(getshrstr(smode), 'k')),
+        cast_void(weakvalue = strchr(getshrstr(smode), 'v')),
+        (weakkey || weakvalue))) {  /* is really weak? */
+-    if (!weakkey)  /* strong keys? */
++    /* weak keys stay strong: ephemeron convergence is quadratic and unbounded */
++    if (weakvalue)
+       traverseweakvalue(g, h);
+-    else if (!weakvalue)  /* strong values? */
+-      traverseephemeron(g, h, 0);
+-    else {  /* all weak */
+-      if (g->gcstate == GCSpropagate)
+-        linkgclist(h, g->grayagain);  /* must visit again its metatable */
+-      else
+-        linkgclist(h, g->allweak);  /* must clear collected entries */
+-    }
++    else
++      traversestrongtable(g, h);
+   }
+   else  /* not weak */
+     traversestrongtable(g, h);
 --- a/src/lstrlib.c
 +++ b/src/lstrlib.c
 @@ -152,7 +152,7 @@ static int str_rep (lua_State *L) {
@@ -47,7 +70,7 @@
        lua_pushinteger(L, (s2 - s) + lp);
 --- a/src/ltablib.c
 +++ b/src/ltablib.c
-@@ -30,7 +30,15 @@
+@@ -30,7 +30,18 @@
  #define TAB_RW	(TAB_R | TAB_W)		/* read/write */
  
  
@@ -57,14 +80,17 @@
 +#define MAXTABELEMS	((lua_Integer)1 << 22)
 +#endif
 +
-+/* most comparisons one sort may make, which the instruction hook cannot see */
++/* comparisons one sort may make, 64 per element within these bounds, which the hook cannot see */
++#if !defined(MINSORTCOMPS)
++#define MINSORTCOMPS	((lua_Integer)1 << 22)
++#endif
 +#if !defined(MAXSORTCOMPS)
-+#define MAXSORTCOMPS	((lua_Integer)1 << 22)
++#define MAXSORTCOMPS	((lua_Integer)1 << 23)
 +#endif
  
  
  static int checkfield (lua_State *L, const char *key, int n) {
-@@ -58,6 +66,16 @@ static void checktab (lua_State *L, int arg, int what) {
+@@ -58,6 +69,16 @@ static void checktab (lua_State *L, int arg, int what) {
  }
  
  
@@ -81,7 +107,7 @@
  static int tinsert (lua_State *L) {
    lua_Integer pos;  /* where to insert new element */
    lua_Integer e = aux_getn(L, 1, TAB_RW);
-@@ -124,6 +142,7 @@ static int tmove (lua_State *L) {
+@@ -124,6 +145,7 @@ static int tmove (lua_State *L) {
      luaL_argcheck(L, f > 0 || e < LUA_MAXINTEGER + f, 3,
                    "too many elements to move");
      n = e - f + 1;  /* number of elements to move */
@@ -89,7 +115,7 @@
      luaL_argcheck(L, t <= LUA_MAXINTEGER - n + 1, 4,
                    "destination wrap around");
      if (t > e || t <= f || (tt != 1 && !lua_compare(L, 1, tt, LUA_OPEQ))) {
-@@ -160,6 +179,8 @@ static int tconcat (lua_State *L) {
+@@ -160,6 +182,8 @@ static int tconcat (lua_State *L) {
    const char *sep = luaL_optlstring(L, 2, "", &lsep);
    lua_Integer i = luaL_optinteger(L, 3, 1);
    last = luaL_optinteger(L, 4, last);
@@ -98,7 +124,7 @@
    luaL_buffinit(L, &b);
    for (; i < last; i++) {
      addfield(L, &b, i);
-@@ -273,6 +294,11 @@ static void set2 (lua_State *L, IdxT i, IdxT j) {
+@@ -273,6 +297,11 @@ static void set2 (lua_State *L, IdxT i, IdxT j) {
  ** index 'b' (according to the order of the sort).
  */
  static int sort_comp (lua_State *L, int a, int b) {
@@ -110,11 +136,12 @@
    if (lua_isnil(L, 2))  /* no function? */
      return lua_compare(L, a, b, LUA_OPLT);  /* a < b */
    else {  /* function */
-@@ -403,6 +429,7 @@ static int sort (lua_State *L) {
+@@ -403,6 +432,8 @@ static int sort (lua_State *L) {
      if (!lua_isnoneornil(L, 2))  /* is there a 2nd argument? */
        luaL_checktype(L, 2, LUA_TFUNCTION);  /* must be a function */
      lua_settop(L, 2);  /* make sure there are two arguments */
-+    lua_pushinteger(L, MAXSORTCOMPS);
++    lua_pushinteger(L, n * 64 < MINSORTCOMPS ? MINSORTCOMPS
++                       : n * 64 > MAXSORTCOMPS ? MAXSORTCOMPS : n * 64);
      auxsort(L, 1, (IdxT)n, 0);
    }
    return 0;

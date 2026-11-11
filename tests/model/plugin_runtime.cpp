@@ -365,6 +365,10 @@ void cLibraryLimits()
         require(timer.elapsed() < 1000, "A long C library call was not stopped within a second");
     }
     require(askHtml(plugin, "word") == "200001", "An ordinary plain find failed");
+
+    timer.restart();
+    require(askHtml(plugin, "weak") == "true", "Weak values were not collected");
+    require(timer.elapsed() < 1000, "Collecting chained weak-key tables took more than a second");
 }
 
 void cardLimits()
