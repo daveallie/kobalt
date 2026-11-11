@@ -162,6 +162,31 @@ int safeSetmetatable(lua_State *state)
     return lua_gettop(state);
 }
 
+// Stock xpcall runs its handler with hooks off when the hook raised the error,
+// so neither the budget nor a stop could end it. This one calls the handler
+// after the protected call, as ordinary code under the hook.
+int hookedXpcall(lua_State *state)
+{
+    const int arguments = lua_gettop(state) - 2;
+    luaL_checktype(state, 2, LUA_TFUNCTION);
+    luaL_checkstack(state, arguments + 2, "too many arguments");
+    const int base = lua_gettop(state);
+    lua_pushvalue(state, 1);
+    for (int i = 3; i <= base; ++i)
+        lua_pushvalue(state, i);
+    if (lua_pcall(state, qMax(0, arguments), LUA_MULTRET, 0) == LUA_OK) {
+        lua_pushboolean(state, 1);
+        lua_insert(state, base + 1);
+        return lua_gettop(state) - base;
+    }
+    lua_pushvalue(state, 2);
+    lua_insert(state, -2);
+    lua_pcall(state, 1, 1, 0);
+    lua_pushboolean(state, 0);
+    lua_insert(state, -2);
+    return 2;
+}
+
 void openLibraries(lua_State *state)
 {
     const luaL_Reg libraries[] = { { LUA_GNAME, luaopen_base },
@@ -184,6 +209,8 @@ void openLibraries(lua_State *state)
     lua_getglobal(state, "setmetatable");
     lua_pushcclosure(state, safeSetmetatable, 1);
     lua_setglobal(state, "setmetatable");
+    lua_pushcfunction(state, hookedXpcall);
+    lua_setglobal(state, "xpcall");
 }
 } // namespace
 

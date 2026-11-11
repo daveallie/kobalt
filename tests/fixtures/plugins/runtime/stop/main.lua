@@ -45,16 +45,24 @@ local function hold(depth, full)
     hold(depth - 1, full)
 end
 
-local function nest(depth, full)
-    if depth == 0 then return hold(1000, full) end
+local function rethrow(e)
+    error(e, 0)
+end
+
+local function nest(depth, mode)
+    if depth == 0 then return hold(1000, mode ~= "word") end
     local a <close> = closer
-    pcall(nest, depth - 1, full)
+    if mode == "xfull" then
+        xpcall(nest, rethrow, depth - 1, mode)
+    else
+        pcall(nest, depth - 1, mode)
+    end
 end
 
 function before_lookup(ctx)
     keep, extra, count = {}, {}, 0
     for i = 1, 100000 do keep[i] = { i } end
     for i = 1, 60000 do extra[i] = false end
-    nest(150, ctx.word == "full")
+    nest(150, ctx.word)
     return { title = "stop", html = tostring(#keep) }
 end

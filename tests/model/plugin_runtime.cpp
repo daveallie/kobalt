@@ -417,7 +417,8 @@ void logRateLimit()
     kobalt::setDiagnosticObserver({ });
 }
 
-// `word` "full" fills the heap to the cap before the stop.
+// `word` "full" fills the heap to the cap before the stop, and "xfull" also
+// nests xpcall with a handler that rethrows.
 void stopUnwindsQuickly(const char *word)
 {
     std::atomic_bool abort{ false };
@@ -444,7 +445,7 @@ void stopUnwindsQuickly(const char *word)
     if (elapsed < 0 || !error.contains("was stopped"))
         std::fprintf(stderr, "%s: %s\n", word, qPrintable(error));
     require(elapsed >= 0, "The stop fixture never became ready");
-    require(atCap == (qstrcmp(word, "full") == 0), "The stop fixture did not reach the memory cap");
+    require(atCap == (qstrcmp(word, "word") != 0), "The stop fixture did not reach the memory cap");
     require(!ok && error.contains("was stopped"), "A stopped hook did not report the stop");
     if (elapsed >= 500)
         std::fprintf(stderr, "Unwinding %s took %lld ms\n", word, elapsed);
@@ -452,6 +453,39 @@ void stopUnwindsQuickly(const char *word)
     if (refused > 0)
         std::fprintf(stderr, "Unwinding %s refused %zu allocations\n", word, refused);
     require(refused == 0, "Unwinding a stopped hook needed memory");
+}
+
+void xpcallUnderBudget()
+{
+    LuaPlugin plugin(manifest(fixture("xpcall")), { });
+    loaded(plugin);
+    require(askHtml(plugin, "ok") == "true|3|two", "xpcall lost its results");
+    require(askHtml(plugin, "error") == "false|handled boom", "xpcall did not run its handler");
+    require(askHtml(plugin, "failing") == "false|again",
+            "xpcall did not return the error of a failing handler");
+
+    QElapsedTimer timer;
+    timer.start();
+    bool ok = true;
+    QString error;
+    ask(plugin, "endless", &ok, &error);
+    require(!ok && error.contains("budget"), "An endless xpcall handler escaped the budget");
+    require(timer.elapsed() < 1000, "The budget did not stop an xpcall handler within a second");
+
+    std::atomic_bool abort{ false };
+    LuaPlugin stopping(manifest(fixture("xpcall")), { });
+    stopping.setAbort(&abort);
+    loaded(stopping);
+    kobalt::setDiagnosticObserver([&](const QJsonObject &event) {
+        if (event.value("message").toString().endsWith("ready")) {
+            abort = true;
+            timer.restart();
+        }
+    });
+    ask(stopping, "stop", &ok, &error);
+    kobalt::setDiagnosticObserver({ });
+    require(!ok && error.contains("was stopped"), "A stop did not end an xpcall handler");
+    require(timer.elapsed() < 500, "A stop did not end an xpcall handler promptly");
 }
 
 void manifestValidation()
@@ -513,6 +547,8 @@ int main(int argc, char **argv)
     logRateLimit();
     stopUnwindsQuickly("word");
     stopUnwindsQuickly("full");
+    stopUnwindsQuickly("xfull");
+    xpcallUnderBudget();
     manifestValidation();
     puts("PASS: Lua plugins run in a sandbox");
 }
