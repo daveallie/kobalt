@@ -1,6 +1,6 @@
 # Lua plugins
 
-Kobalt loads plugins written in Lua 5.4. A plugin answers hooks of the reader. The only hook that changes what the reader does is `before_lookup`, which can offer a card beside a dictionary definition. Kobalt ships no plugins; installing one means copying its folder, and removing the folder removes the plugin. There is no plugin manager or settings page. [kobalt-plugins](https://github.com/daveallie/kobalt-plugins) holds an example, the X-Ray plugin, which shows who a character is from a sidecar file.
+Kobalt loads plugins written in Lua 5.4. A plugin answers hooks of the reader. The only hook that changes what the reader does is `before_lookup`, which can offer a card beside a dictionary definition. Kobalt ships no plugins; installing one means copying its folder, and removing the folder removes the plugin. Settings > System > Plugins lists the installed plugins with their status, turns plugins off one at a time or all together, and deletes a plugin's saved data; [Settings](reader/settings.md) describes it. [kobalt-plugins](https://github.com/daveallie/kobalt-plugins) holds an example, the X-Ray plugin, which shows who a character is from a sidecar file.
 
 ## Folders
 

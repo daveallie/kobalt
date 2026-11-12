@@ -7215,6 +7215,11 @@ printf '[{"file":"%s.png","scene":"%s"}]' "$3" "$KOBALT_GALLERY_CAPTURE" > "$2/p
         QVERIFY(openPluginSettings(fixture, "rrPlugin_ok"));
         QVERIFY(fixture.press("rrPlugin_ok"));
         QTRY_VERIFY(fixture.visible("rrPluginDetails"));
+        // The folder is named as the reader knows it, not by its path on this computer.
+        auto *about = qobject_cast<QLabel *>(fixture.widget("rrPluginDetailsDescription"));
+        QVERIFY(about);
+        QVERIFY2(about->text().contains("the test plugin folder/ok"), qPrintable(about->text()));
+        QVERIFY(!about->text().contains(pluginStatusFixtures));
         auto *enabled = qobject_cast<QCheckBox *>(fixture.widget("rrPluginEnabled"));
         QVERIFY(enabled && enabled->isChecked());
         QVERIFY(fixture.press("rrPluginEnabled"));
@@ -13772,6 +13777,34 @@ private slots:
         QTRY_VERIFY(!fixture.visible("rrStandbyConfirmation"));
     }
 
+    void pluginSettings_data() { screenshotVariants(); }
+
+    void pluginSettings()
+    {
+        QFETCH(int, preset);
+        QFETCH(bool, dark);
+        QTemporaryDir data;
+        const auto folders =
+                pluginFolders(QStringLiteral(KOBALT_TEST_PLUGIN_FIXTURES "/gallery"), data.path());
+        Fixture fixture(dark, false, false, true, false, false,
+                        [&folders](ReaderHostServices &services) {
+                            folders(services);
+                            services.pluginFolderLabel = QStringLiteral(".adds/kobalt/plugins");
+                        });
+        QVERIFY(fixture.prepared);
+        selectPreview(fixture, preset);
+        openPluginBook(fixture);
+        const auto name = screenshotVariant(preset, dark);
+        QVERIFY(openPluginSettings(fixture));
+        QVERIFY(capture(fixture, name + "-settings-plugins"));
+        QVERIFY(revealSettingsOption(fixture, "rrPlugin_xray"));
+        QVERIFY(fixture.press("rrPlugin_xray"));
+        QTRY_VERIFY(fixture.visible("rrPluginDetails"));
+        QVERIFY(capture(fixture, name + "-settings-plugin-details"));
+        QVERIFY(fixture.press("rrPluginDone"));
+        QTRY_VERIFY(!fixture.visible("rrPluginDetails"));
+    }
+
     void automaticOpeningConfirmation_data() { screenshotVariants(); }
 
     void automaticOpeningConfirmation()
@@ -15229,7 +15262,11 @@ private slots:
                                "Holt \u2014 Estranged brother</p><p><b>Last seen:</b> Ch. 4</p>",
                                "X-Ray \u00b7 revealed up to 18%" });
         QVERIFY(fixture.press("rrDictionarySelect"));
-        QTRY_VERIFY(!pluginChoice(fixture, "X-Ray").isEmpty());
+        QTRY_VERIFY(fixture.visible("rrDictionaryChoices"));
+        // A short sheet puts the plugin entry on a later page.
+        for (int page = 0; page < 4 && pluginChoice(fixture, "X-Ray").isEmpty(); ++page)
+            QVERIFY(fixture.press("rrDictionaryChoicesNext"));
+        QVERIFY(!pluginChoice(fixture, "X-Ray").isEmpty());
         QVERIFY(capture(fixture, name + "-plugin-choice"));
         QVERIFY(fixture.press(qPrintable(pluginChoice(fixture, "X-Ray"))));
         QTRY_VERIFY(panel->isVisible());

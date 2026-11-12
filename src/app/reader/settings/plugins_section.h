@@ -56,6 +56,7 @@ private:
     void confirmDelete(const plugins::PluginStatus &status);
 
     QWidget *page, *overlayParent;
+    QString folderLabel;
     std::function<void(ui::CaptionButton *)> styleRow;
     QVBoxLayout *rows;
     ui::DescribedOption *useOption;

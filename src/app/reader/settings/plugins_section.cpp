@@ -9,6 +9,7 @@
 #include "ui/style/styles.h"
 #include "ui/style/theme.h"
 
+#include <QFileInfo>
 #include <QLabel>
 #include <QVBoxLayout>
 
@@ -37,6 +38,7 @@ PluginsSection::PluginsSection(QWidget *page, QVBoxLayout *rows, QWidget *overla
     : QObject(page),
       page(page),
       overlayParent(overlayParent),
+      folderLabel(folderLabel),
       styleRow(std::move(styleRow)),
       rows(rows)
 {
@@ -176,7 +178,7 @@ void PluginsSection::openDetails(const PluginStatus &status)
                        ? QString()
                        : strings::get("settings.plugin_version").arg(status.version)
                                + QLatin1Char('\n'))
-                    + status.folder;
+                    + folderLabel + QLatin1Char('/') + QFileInfo(status.folder).fileName();
     about = about.isEmpty() ? facts : about + QStringLiteral("\n\n") + facts;
     card->heading(status.name, about, "rrPluginDetailsTitle", "rrPluginDetailsDescription");
     const int cardWidth = qMin<int>(metrics::notice::cardWidth,
