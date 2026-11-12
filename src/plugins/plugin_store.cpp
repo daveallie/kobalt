@@ -96,11 +96,11 @@ void PluginStore::loadFile(Scope scope)
         return;
     // Twice the cap leaves room for JSON escapes and whitespace a person may add.
     if (input.size() > 2 * cap(scope) + 1024) {
-        backUp(file, QStringLiteral("larger than its limit"));
+        values(scope).blocked = !backUp(file, QStringLiteral("larger than its limit"));
         return;
     }
     if (!input.open(QIODevice::ReadOnly)) {
-        backUp(file, QStringLiteral("unreadable"));
+        values(scope).blocked = !backUp(file, QStringLiteral("unreadable"));
         return;
     }
     QJsonParseError parse;
@@ -108,16 +108,16 @@ void PluginStore::loadFile(Scope scope)
     input.close();
     const QJsonObject object = document.object();
     if (parse.error != QJsonParseError::NoError || !document.isObject()) {
-        backUp(file, QStringLiteral("not a JSON object"));
+        values(scope).blocked = !backUp(file, QStringLiteral("not a JSON object"));
         return;
     }
     if (object.value(QStringLiteral("format")).toDouble() != format) {
-        backUp(file, QStringLiteral("unsupported format"));
+        values(scope).blocked = !backUp(file, QStringLiteral("unsupported format"));
         return;
     }
     const QJsonValue entries = object.value(QStringLiteral("values"));
     if (!entries.isObject()) {
-        backUp(file, QStringLiteral("no values object"));
+        values(scope).blocked = !backUp(file, QStringLiteral("no values object"));
         return;
     }
     Values loaded;
@@ -128,13 +128,13 @@ void PluginStore::loadFile(Scope scope)
         loaded.size += entrySize(it.key(), json);
     }
     if (loaded.size > cap(scope)) {
-        backUp(file, QStringLiteral("larger than its limit"));
+        values(scope).blocked = !backUp(file, QStringLiteral("larger than its limit"));
         return;
     }
     values(scope) = loaded;
 }
 
-void PluginStore::backUp(const QString &file, const QString &reason)
+bool PluginStore::backUp(const QString &file, const QString &reason)
 {
     mainthread::BlockingOperation operation("plugin-data-backup");
     const QString backups = folder() + QStringLiteral("/backups");
@@ -152,6 +152,7 @@ void PluginStore::backUp(const QString &file, const QString &reason)
                  { "file", file },
                  { "backup", moved ? target : QString() } },
                DiagnosticSeverity::Warning);
+    return moved;
 }
 
 QByteArray PluginStore::value(Scope scope, const QString &key) const
@@ -180,6 +181,10 @@ bool PluginStore::set(Scope scope, const QString &key, const QByteArray &json, Q
         return false;
     }
     Values &target = values(scope);
+    if (target.blocked) {
+        *error = QStringLiteral("its saved data could not be moved to backups");
+        return false;
+    }
     const auto existing = target.entries.constFind(key);
     const bool present = existing != target.entries.constEnd();
     if (present ? *existing == json : json.isEmpty())

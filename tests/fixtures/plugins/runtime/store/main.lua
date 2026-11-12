@@ -36,6 +36,23 @@ function cases.refused()
     return "ok"
 end
 
+function cases.oversized()
+    local s = kobalt.store
+    -- 2^60 leaves once expanded; refused long before the conversion could finish.
+    local shared = 1
+    for _ = 1, 60 do shared = { shared, shared } end
+    local ok, message = s.set("x", shared)
+    check(ok == nil and message:find("limit"), "a shared-subtable value was accepted")
+    ok, message = s.set("x", string.rep("a", 300 * 1024))
+    check(ok == nil and message:find("limit"), "a string over the limit was accepted")
+    local wide = {}
+    for i = 1, 40000 do wide[i] = i end
+    ok, message = kobalt.book_store.set("x", wide)
+    check(ok == nil and message:find("limit"), "a list over the book limit was accepted")
+    check(s.get("x") == nil and kobalt.book_store.get("x") == nil, "a refused value was stored")
+    return "ok"
+end
+
 function cases.copy()
     local s = kobalt.book_store
     check(s.set("t", { n = 1 }), "a table was refused")

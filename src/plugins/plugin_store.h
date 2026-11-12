@@ -39,6 +39,8 @@ private:
         QHash<QString, QByteArray> entries;
         qint64 size = 0;
         bool changed = false;
+        // A bad file stayed in place because it could not be moved to backups/.
+        bool blocked = false;
     };
 
     Values &values(Scope scope);
@@ -46,7 +48,8 @@ private:
     QString folder() const;
     QString path(Scope scope) const;
     void loadFile(Scope scope);
-    void backUp(const QString &file, const QString &reason);
+    // Moves an unusable file to backups/; false when it stays in place.
+    bool backUp(const QString &file, const QString &reason);
 
     QString root, pluginId, bookKey;
     Values global, book;

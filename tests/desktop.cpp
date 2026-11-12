@@ -6946,6 +6946,33 @@ printf '[{"file":"%s.png","scene":"%s"}]' "$3" "$KOBALT_GALLERY_CAPTURE" > "$2/p
     }
 
     // Checks that the next lookup opens on the definition after a card was chosen.
+    // Checks that choosing the shown definition again, when it has no dictionary id, keeps it.
+    void pluginDefinitionEntryKeepsDefinition()
+    {
+        Fixture fixture(false, false, false, true, false, false, pluginServices("card"));
+        openPluginBook(fixture);
+        auto *panel = dynamic_cast<DictionaryPanel *>(fixture.widget("rrDictionary"));
+        QVERIFY(panel);
+        DictionaryResult result;
+        result.word = "type";
+        result.dictionary = "Saved definition";
+        result.received = result.restored = true;
+        result.html = "<p><b>type</b> A printed character.</p>";
+        panel->open("type", result, { 100, 100, 50, 40 });
+        QTRY_VERIFY(panel->isVisible());
+        auto *definition = dynamic_cast<ui::PagedText *>(fixture.widget("rrDefinition"));
+        QVERIFY(definition);
+        const auto html = definition->html();
+        panel->addPluginCard({ "card", pluginCardName, "Card", "<p>Card</p>", {} });
+        QVERIFY(fixture.press("rrDictionarySelect"));
+        QTRY_VERIFY(fixture.visible("rrDictionaryChoices"));
+        const auto current = checkedChoice(fixture);
+        QVERIFY(!current.isEmpty());
+        QVERIFY(fixture.press(qPrintable(current)));
+        QTRY_VERIFY(!fixture.visible("rrDictionaryChoices"));
+        QCOMPARE(definition->html(), html);
+    }
+
     void pluginChoiceNotRemembered()
     {
         Fixture fixture(false, false, false, true, false, false, pluginServices("card"));

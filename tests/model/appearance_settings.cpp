@@ -652,6 +652,17 @@ int main()
     require(appearance::globalPreferences(publisherDefault).value("default_font_face")
                     == QJsonValue(""),
             "Publisher default was removed from existing global preferences");
+    {
+        const auto ids = QJsonArray{ "a", "b" };
+        require(appearance::globalPreferences(qt::object({ { "plugins_disabled", ids } }))
+                                .value("plugins_disabled")
+                        == ids,
+                "A list of turned-off plugins was removed");
+        for (const QJsonValue &bad : { QJsonValue("a"), QJsonValue(QJsonArray{ "a", 1 }) })
+            require(!appearance::globalPreferences(qt::object({ { "plugins_disabled", bad } }))
+                             .contains("plugins_disabled"),
+                    "An invalid list of turned-off plugins was kept");
+    }
     for (const auto *key : appearance::fallbackFontKeys) {
         auto changed = from;
         changed[key] = QStringLiteral("Personal Font");

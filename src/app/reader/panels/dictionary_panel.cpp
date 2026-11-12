@@ -806,6 +806,8 @@ void DictionaryPanel::redrawChoices(bool atCurrent)
         connect(button, &QPushButton::clicked, this, [this, id = option.id] {
             dropdown->hide();
             refresh();
+            if (!showingCard && id == currentId)
+                return;
             for (const auto &card : cards)
                 if (id == QStringLiteral("plugin:") + card.pluginId) {
                     showCard(card);

@@ -563,7 +563,7 @@ void storeBindings()
     LuaPlugin plugin(manifest(fixture("store")), {});
     plugin.setStore(&store);
     loaded(plugin);
-    for (const char *word : { "types", "refused", "copy" }) {
+    for (const char *word : { "types", "refused", "oversized", "copy" }) {
         const QString result = askHtml(plugin, word);
         if (result != "ok")
             std::fprintf(stderr, "%s: %s\n", word, qPrintable(result));

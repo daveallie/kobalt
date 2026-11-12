@@ -164,6 +164,27 @@ void badFileBackedUp()
     }
 }
 
+// A bad file that cannot be moved aside stays as it is: the store refuses
+// writes, so a save never replaces the original.
+void unmovableBadFileKept()
+{
+    QTemporaryDir root;
+    const QByteArray bytes = "{ not json";
+    write(root.path() + "/plugin/global.json", bytes);
+    // A file where the backups folder belongs makes the move fail.
+    write(root.path() + "/plugin/backups", "");
+    PluginStore store(root.path(), "plugin", "book");
+    store.load();
+    require(store.size(Scope::Global) == 0, "A bad store file was loaded");
+    QString error;
+    require(!set(store, Scope::Global, "a", "1", &error) && !error.isEmpty(),
+            "A store whose bad file stayed in place accepted a value");
+    require(set(store, Scope::Book, "a", "1"), "The other store stopped working");
+    saved(store);
+    require(read(root.path() + "/plugin/global.json") == bytes,
+            "A bad store file that could not be moved was overwritten");
+}
+
 void bookKeyed()
 {
     const QByteArray hash = QCryptographicHash::hash("k", QCryptographicHash::Sha256).toHex();
@@ -207,6 +228,7 @@ int main(int argc, char **argv)
     caps();
     keyRules();
     badFileBackedUp();
+    unmovableBadFileKept();
     bookKeyed();
     noRoot();
     clearRemoves();

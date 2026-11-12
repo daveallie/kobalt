@@ -128,16 +128,32 @@ bool pushJson(lua_State *state, const QJsonValue &value, int depth, const Memory
     }
 }
 
+// Spends `bytes` of the conversion's allowance; false, with `error`, once it is gone.
+// Each visit counts, so a table reached many times cannot expand without bound.
+bool spend(qint64 bytes, qint64 *room, QString *error)
+{
+    *room -= bytes;
+    if (*room >= 0)
+        return true;
+    *error = QStringLiteral("the value would take the store past its limit");
+    return false;
+}
+
 // Converts the value at `index` without raising Lua errors; false, with `error`, when it
 // is not JSON: a function, a cycle, a non-finite number or a table that is neither a
-// list 1..n nor keyed by strings.
-bool luaToJson(lua_State *state, int index, QJsonValue *out, QString *error, int depth)
+// list 1..n nor keyed by strings, or when its JSON would use more than `room` bytes.
+bool luaToJson(lua_State *state, int index, QJsonValue *out, QString *error, int depth,
+               qint64 *room)
 {
     index = lua_absindex(state, index);
     if (depth > 512 || !lua_checkstack(state, 4)) {
         *error = QStringLiteral("the value is nested too deeply or refers to itself");
         return false;
     }
+    // A number takes at most 24 bytes as JSON; a table at least its brackets.
+    if (!spend(lua_type(state, index) == LUA_TSTRING ? qint64(lua_rawlen(state, index)) + 2 : 24,
+               room, error))
+        return false;
     switch (lua_type(state, index)) {
     case LUA_TBOOLEAN:
         *out = bool(lua_toboolean(state, index));
@@ -173,6 +189,10 @@ bool luaToJson(lua_State *state, int index, QJsonValue *out, QString *error, int
         lua_pop(state, 1);
         if (lua_type(state, -1) == LUA_TSTRING) {
             ++strings;
+            if (!spend(qint64(lua_rawlen(state, -1)) + 3, room, error)) {
+                lua_pop(state, 1);
+                return false;
+            }
         } else if (lua_isinteger(state, -1) && lua_tointeger(state, -1) > 0) {
             ++integers;
             largest = qMax(largest, lua_tointeger(state, -1));
@@ -195,7 +215,7 @@ bool luaToJson(lua_State *state, int index, QJsonValue *out, QString *error, int
         for (lua_Integer i = 1; i <= integers; ++i) {
             lua_rawgeti(state, index, i);
             QJsonValue item;
-            const bool ok = luaToJson(state, -1, &item, error, depth + 1);
+            const bool ok = luaToJson(state, -1, &item, error, depth + 1, room);
             lua_pop(state, 1);
             if (!ok)
                 return false;
@@ -208,7 +228,7 @@ bool luaToJson(lua_State *state, int index, QJsonValue *out, QString *error, int
     lua_pushnil(state);
     while (lua_next(state, index)) {
         QJsonValue item;
-        if (!luaToJson(state, -1, &item, error, depth + 1)) {
+        if (!luaToJson(state, -1, &item, error, depth + 1, room)) {
             lua_pop(state, 2);
             return false;
         }
@@ -664,7 +684,11 @@ int LuaPlugin::storeSet(lua_State *state)
         const bool isNil = lua_isnil(state, 2);
         if (!plugin->store)
             error = QStringLiteral("no plugin data folder");
-        else if (isNil || luaToJson(state, 2, &value, &error, 0))
+        else if (isNil || [&] {
+                     qint64 room = scope == PluginStore::Scope::Global ? PluginStore::globalCap
+                                                                       : PluginStore::bookCap;
+                     return luaToJson(state, 2, &value, &error, 0, &room);
+                 }())
             ok = plugin->store->set(scope, text(state, 1),
                                     isNil ? QByteArray() : PluginStore::encode(value), &error);
     }
