@@ -1927,13 +1927,18 @@ void Reader::lookupSelection()
                     lookup.position = kobalt::plugins::capAtPage(
                             lookup.position, reader->linkHistory.first().page + 1);
                 reader->plugins->lookup(
-                        lookup, [guard, timing](quint64 replied, kobalt::plugins::Card card) {
+                        lookup,
+                        [guard, timing](quint64 replied, kobalt::plugins::Card card) {
+                            if (guard)
+                                guard->finishPluginLookup(replied, card, timing);
+                        },
+                        [guard, timing](quint64 replied) {
                             if (!guard)
                                 return;
                             guard->setProperty("reader_plugin_replies",
                                                guard->property("reader_plugin_replies").toInt()
                                                        + 1);
-                            guard->finishPluginLookup(replied, card, timing);
+                            guard->finishPluginLookup(replied, {}, timing);
                         });
                 reader->setProperty("reader_plugin_requests",
                                     reader->property("reader_plugin_requests").toInt() + 1);

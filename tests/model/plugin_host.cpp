@@ -7,6 +7,7 @@
 
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
@@ -69,8 +70,11 @@ void inEvent(Work work)
     require(waitFor([&] { return done; }), "A queued test step never ran");
 }
 
+std::atomic_int statusEvents{ 0 };
+
 std::unique_ptr<PluginHost> open(PluginHost::Directory directory, int joinLimitMs = 2000,
-                                 QString dataRoot = {}, QString bookKey = QStringLiteral("key"))
+                                 QString dataRoot = {}, QString bookKey = QStringLiteral("key"),
+                                 Switches switches = {})
 {
     std::unique_ptr<PluginHost> host;
     inEvent([&] {
@@ -78,7 +82,8 @@ std::unique_ptr<PluginHost> open(PluginHost::Directory directory, int joinLimitM
                 std::move(directory), [dataRoot] { return dataRoot; }, Context(),
                 { QStringLiteral("id"), QStringLiteral("Wolf Hall"), QStringLiteral("en"),
                   bookKey },
-                joinLimitMs));
+                switches, joinLimitMs));
+        host->statusChanged = [](const QVector<PluginStatus> &) { ++statusEvents; };
     });
     return host;
 }
@@ -89,9 +94,10 @@ std::unique_ptr<PluginHost> open(const QString &directory, int joinLimitMs = 200
 }
 
 std::unique_ptr<PluginHost> openWithData(const QString &directory, const QString &dataRoot,
-                                         const QString &bookKey = QStringLiteral("key"))
+                                         const QString &bookKey = QStringLiteral("key"),
+                                         Switches switches = {})
 {
-    return open([directory] { return directory; }, 2000, dataRoot, bookKey);
+    return open([directory] { return directory; }, 2000, dataRoot, bookKey, switches);
 }
 
 void close(std::unique_ptr<PluginHost> &host)
@@ -106,24 +112,39 @@ struct Answer
 {
     bool replied = false;
     quint64 epoch = 0;
-    Card card;
+    QVector<Card> cards;
+    QVector<qint64> arrivals;
     bool mainThread = false;
+    QElapsedTimer clock;
+
+    // The first card, or an empty one.
+    Card card() const { return cards.isEmpty() ? Card() : cards.first(); }
 };
 
 std::shared_ptr<Answer> ask(PluginHost &host, const QString &word, quint64 epoch = 1)
 {
     auto answer = std::make_shared<Answer>();
+    answer->clock.start();
     inEvent([&] {
         Lookup lookup;
         lookup.epoch = epoch;
         lookup.word = word;
-        host.lookup(lookup, [answer](quint64 replyEpoch, Card card) {
-            require(!answer->replied, "A lookup replied twice");
-            answer->replied = true;
-            answer->epoch = replyEpoch;
-            answer->card = card;
-            answer->mainThread = QThread::currentThread() == qApp->thread();
-        });
+        host.lookup(
+                lookup,
+                [answer](quint64 replyEpoch, Card card) {
+                    require(!answer->replied, "A card arrived after the lookup was done");
+                    require(replyEpoch == answer->epoch || answer->cards.isEmpty(),
+                            "Cards of one lookup carried different epochs");
+                    answer->epoch = replyEpoch;
+                    answer->cards.append(card);
+                    answer->arrivals.append(answer->clock.elapsed());
+                },
+                [answer](quint64 replyEpoch) {
+                    require(!answer->replied, "A lookup finished twice");
+                    answer->replied = true;
+                    answer->epoch = replyEpoch;
+                    answer->mainThread = QThread::currentThread() == qApp->thread();
+                });
     });
     return answer;
 }
@@ -132,7 +153,7 @@ Card answered(PluginHost &host, const QString &word = QStringLiteral("Cromwell")
 {
     const auto answer = ask(host, word);
     require(waitFor([&] { return answer->replied; }), "A lookup never replied");
-    return answer->card;
+    return answer->card();
 }
 
 // Collects plugin diagnostics, which arrive on the plugin thread.
@@ -190,7 +211,7 @@ void noPluginsRepliesNothing()
         const auto answer = ask(*host, QStringLiteral("Cromwell"), 9);
         require(waitFor([&] { return answer->replied; }), "A host without plugins never replied");
         require(elapsed.elapsed() < 1000, "A host without plugins replied late");
-        require(answer->card.isEmpty() && answer->epoch == 9,
+        require(answer->cards.isEmpty() && answer->epoch == 9,
                 "A host without plugins returned a card or lost the epoch");
         close(host);
     }
@@ -251,6 +272,11 @@ void threeFailuresDisable(Events &events)
         require(answered(*host).isEmpty(), "A failing plugin returned a card");
     require(answered(*host).isEmpty(), "A plugin that failed three times still ran");
     require(host->skipsLookups(), "Lookups still waited for a disabled plugin");
+    require(waitFor([&] {
+                const auto statuses = host->statuses();
+                return statuses.size() == 1 && statuses.first().state == PluginStatus::Stopped;
+            }),
+            "A plugin stopped after three failures was not reported as stopped");
     close(host);
     const QStringList lines = events.take();
     require(lines.filter("plugin-failed").size() == 3, "Each plugin failure was not logged");
@@ -305,6 +331,8 @@ void hungCloseDetaches(Events &events)
     auto next = open(fixture("single"));
     require(next->skipsLookups(),
             "A host opened beside a hung thread did not start with plugins off");
+    require(next->pluginsBlocked() && next->statuses().isEmpty(),
+            "A host opened beside a hung thread did not report that plugins are blocked");
     require(answered(*next).isEmpty(), "A host with plugins off returned a card");
     close(next);
     require(events.take().filter("plugins-off").size() == 1, "Plugins off was not logged");
@@ -365,13 +393,131 @@ void noDataRootStillAnswers(Events &events)
             "A refused store write counted as a plugin failure");
 }
 
+void cardsArriveSeparately()
+{
+    auto host = open(fixture("pair"));
+    const auto answer = ask(*host, QStringLiteral("Cromwell"), 3);
+    require(waitFor([&] { return answer->replied; }), "A lookup never finished");
+    require(answer->cards.size() == 2, "Each answering plugin did not add its own card");
+    require(answer->cards[0].pluginId == "a_fast" && answer->cards[0].pluginName == "Fast"
+                    && answer->cards[1].pluginId == "b_slow" && answer->cards[1].title == "slow",
+            "Cards did not carry their plugin in id order");
+    require(answer->arrivals[1] - answer->arrivals[0] >= 100,
+            "The fast card waited for the slow plugin");
+    require(answer->epoch == 3, "The cards lost their epoch");
+    close(host);
+}
+
+void staleLookupSkipped()
+{
+    auto host = open(fixture("stale"));
+    const auto first = ask(*host, QStringLiteral("first"), 1);
+    const auto second = ask(*host, QStringLiteral("second"), 2);
+    require(waitFor([&] { return first->replied && second->replied; }),
+            "A queued lookup never finished");
+    require(first->cards.isEmpty() && first->epoch == 1,
+            "A lookup that was already stale ran the plugins");
+    require(second->card().title == "second", "The newest lookup did not run");
+    close(host);
+}
+
+PluginStatus statusOf(const QVector<PluginStatus> &statuses, const QString &id)
+{
+    for (const PluginStatus &status : statuses)
+        if (status.id == id)
+            return status;
+    std::fprintf(stderr, "No status for %s\n", qPrintable(id));
+    require(false, "A plugin had no status");
+    return {};
+}
+
+void statusSnapshot()
+{
+    QTemporaryDir data;
+    QDir(data.path()).mkpath("ghost");
+    QDir(data.path()).mkpath("ok");
+    Switches switches;
+    switches.disabled.insert(QStringLiteral("off"));
+    const int before = statusEvents;
+    auto host = openWithData(fixture("statuses"), data.path(), QStringLiteral("key"), switches);
+    require(waitFor([&] { return host->statuses().size() == 6; }),
+            "The plugin statuses were not published");
+    require(statusEvents > before, "statusChanged did not fire");
+    const auto statuses = host->statuses();
+    const auto ok = statusOf(statuses, "ok");
+    require(ok.state == PluginStatus::Running && ok.name == "Okay" && ok.version == "2.1"
+                    && ok.description == "Answers every word." && ok.folder.endsWith("/ok"),
+            "A running plugin's status is wrong");
+    require(statusOf(statuses, "off").state == PluginStatus::TurnedOff,
+            "A turned-off plugin was not reported as turned off");
+    const auto noMain = statusOf(statuses, "no_main");
+    require(noMain.state == PluginStatus::NotLoaded && noMain.reason.contains("main.lua"),
+            "A plugin without main.lua was not reported");
+    const auto mismatch = statusOf(statuses, "mismatch_dir");
+    require(mismatch.state == PluginStatus::NotLoaded
+                    && mismatch.reason.contains("folder name must match id"),
+            "A folder named differently from its id was not reported");
+    require(statusOf(statuses, "load_error").state == PluginStatus::NotLoaded,
+            "A plugin that failed to load was not reported");
+    require(statusOf(statuses, "ghost").state == PluginStatus::DataOnly,
+            "Data without a plugin was not reported");
+    require(answered(*host).title == "ok", "The running plugin did not answer");
+    close(host);
+}
+
+void safeModeLoadsNothing()
+{
+    Switches switches;
+    switches.enabled = false;
+    auto host = openWithData(fixture("statuses"), QString(), QStringLiteral("key"), switches);
+    require(waitFor([&] { return host->statuses().size() == 5; }),
+            "Statuses were not published with plugins off");
+    require(host->skipsLookups(), "A lookup still waited with plugins off");
+    for (const char *id : { "ok", "off" })
+        require(statusOf(host->statuses(), id).state == PluginStatus::TurnedOff,
+                "A plugin was not turned off with plugins off");
+    require(answered(*host).isEmpty(), "A plugin answered with plugins off");
+    close(host);
+}
+
+void deleteDataClears()
+{
+    QTemporaryDir data;
+    auto host = openWithData(fixture("remember"), data.path());
+    require(answered(*host).title == "book 1 global 1", "The lookup was not counted");
+    inEvent([&] { host->flush(); });
+    require(waitFor([&] { return QFile::exists(data.path() + "/remember/global.json"); }),
+            "The data was not written");
+    bool done = false, deleted = false;
+    inEvent([&] {
+        host->deleteData(QStringLiteral("remember"), [&](bool ok, const QString &) {
+            done = true;
+            deleted = ok;
+        });
+    });
+    require(waitFor([&] { return done; }) && deleted, "Deleting plugin data failed");
+    require(!QDir(data.path() + "/remember").exists(), "The data folder was not removed");
+    require(answered(*host).title == "book 1 global 1", "The running plugin kept its data");
+    bool refused = false;
+    done = false;
+    inEvent([&] {
+        host->deleteData(QStringLiteral(".."), [&](bool ok, const QString &) {
+            done = true;
+            refused = !ok;
+        });
+    });
+    require(waitFor([&] { return done; }) && refused && QDir(data.path()).exists(),
+            "Deleting a path outside the data folder was not refused");
+    close(host);
+}
+
 void replyOnMainThread()
 {
     auto host = open(fixture("single"));
     const auto answer = ask(*host, QStringLiteral("Cromwell"), 42);
     require(waitFor([&] { return answer->replied; }), "A lookup never replied");
     require(answer->mainThread, "A reply ran off the main thread");
-    require(answer->epoch == 42 && answer->card.title == "Cromwell",
+    require(answer->epoch == 42 && answer->card().title == "Cromwell",
             "A reply lost its epoch or card");
     close(host);
 }
@@ -417,6 +563,11 @@ int main(int argc, char **argv)
     storePersistsAcrossBooks();
     sleepFlushes();
     noDataRootStillAnswers(events);
+    cardsArriveSeparately();
+    staleLookupSkipped();
+    statusSnapshot();
+    safeModeLoadsNothing();
+    deleteDataClears();
     closeRunsBookClosed(events);
     hungCloseDetaches(events);
 
