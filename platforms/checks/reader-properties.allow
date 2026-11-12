@@ -38,6 +38,8 @@ reader_palette_regions|Reader window: colour areas of the highlight palette.
 reader_palette_repairs|Reader window: highlight palette areas that changed, repaired with a colour update.
 reader_partial_controls|Reader window: area of the controls that may refresh in partial mode.
 reader_plain_controls|Reader window: only the plain reading bars are open, so they can cross a text page with a partial refresh.
+reader_plugin_replies|Reader window: count of plugin lookups that every plugin has answered, read by tests.
+reader_plugin_requests|Reader window: count of lookups sent to the plugins, read by tests.
 reader_popup_overlay|Pop-up overlay: stylesheet selector that keeps its background transparent.
 reader_preparing_handoff|Reader window: the reader is preparing to hand the screen to Nickel for sleep.
 reader_preparing_wake|Reader window: the reader is preparing its first frame after wake.
