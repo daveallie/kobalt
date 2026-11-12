@@ -248,6 +248,7 @@ ReaderHostServices readerHostServices()
     result.nativeSleepPreview = nativeSleepPreview;
     result.pluginDirectory = [] { return QStringLiteral(KOBALT_CONFIG_DIR "/plugins"); };
     result.pluginDataDirectory = [] { return QStringLiteral(KOBALT_CONFIG_DIR "/plugin-data"); };
+    result.pluginFolderLabel = QStringLiteral(".adds/kobalt/plugins");
     result.deviceName = syncDeviceModel();
     result.colorDisplay = [] { return pageAnimationPanel() == AnimationPanel::Color; };
     result.downloadableDictionaries = false;

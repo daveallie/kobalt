@@ -1,3 +1,4 @@
+#include "plugins_section.h"
 #include "ui/controls/buttons.h"
 #include "ui/controls/icons.h"
 #include "ui/controls/rows.h"
@@ -939,6 +940,8 @@ SettingsPanel::SettingsPanel(QWidget *parent, const SettingsPanelInputs &inputs)
                 [this] { dismissAutomaticOpeningConfirmation(); });
         connect(automaticOpeningDialog->primaryButton(), &QPushButton::clicked, this, [this] {
             dismissAutomaticOpeningConfirmation();
+            if (pluginsSection)
+                pluginsSection->dismissDialogs();
             if (automaticOpeningChosen)
                 automaticOpeningChosen(false);
         });
@@ -1046,6 +1049,13 @@ SettingsPanel::SettingsPanel(QWidget *parent, const SettingsPanelInputs &inputs)
             check(systemPage, "rrHideOpeningCover", strings::get("settings.opening_cover"),
                   strings::get("settings.opening_cover_description"));
     systemRows->addWidget(openingCoverOption);
+    if (inputs.plugins) {
+        section(systemPage, systemRows, "rrSystemPluginsSection",
+                strings::get("settings.section_plugins"));
+        pluginsSection =
+                new PluginsSection(systemPage, systemRows, parent, inputs.pluginFolderLabel,
+                                   [](ui::CaptionButton *row) { styleListAction(row); });
+    }
     systemRows->addStretch(1);
     aboutPage = new AboutPage(settingsPages);
     settingsPages->addWidget(aboutPage);
@@ -1167,6 +1177,8 @@ SettingsPanel::SettingsPanel(QWidget *parent, const SettingsPanelInputs &inputs)
         saveWordsOption
     };
     options.append(openingCoverOption);
+    if (pluginsSection)
+        options.append(pluginsSection->usePluginsOption());
     options.prepend(zenModeOption);
     options.append(zenDarkOption);
     for (auto *option : options) {

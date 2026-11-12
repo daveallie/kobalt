@@ -90,6 +90,7 @@ ReaderHostServices readerHostServices()
     result.systemRotation = true;
     result.pluginDirectory = [] { return externalFilesFolder(QStringLiteral("plugins")); };
     result.pluginDataDirectory = [] { return externalFilesFolder(QStringLiteral("plugin-data")); };
+    result.pluginFolderLabel = QStringLiteral("Android/data/<app>/files/plugins");
     // Android imports books, so no sidecar sits beside them.
     result.bookSidecars = false;
     result.browserAvailable = [] { return true; };

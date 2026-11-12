@@ -7,6 +7,7 @@
 #include "session_timeout.h"
 #include "text_presets.h"
 #include <QStringList>
+#include <algorithm>
 
 namespace kobalt::appearance {
 QJsonObject normalizationSettings(const QJsonObject &settings)
@@ -75,6 +76,14 @@ QJsonObject globalPreferences(QJsonObject preferences)
     preferences.remove("bionic_reading");
     if (preferences.contains("book_beautifier")) {
         const auto rules = beautifierSettings(preferences);
+        if (preferences.contains("plugins_disabled")) {
+            const auto ids = preferences.value("plugins_disabled");
+            const auto list = ids.toArray();
+            if (!ids.isArray() || std::any_of(list.begin(), list.end(), [](const QJsonValue &id) {
+                    return !id.isString();
+                }))
+                preferences.remove("plugins_disabled");
+        }
         for (const auto *key : beautifierKeys)
             preferences[key] = rules.value(key);
         preferences.remove("book_beautifier");
@@ -157,7 +166,8 @@ QJsonObject cleanPreferences(QJsonObject preferences)
                              "show_clock",
                              "auto_rotate",
                              "turn_off_wifi_on_open",
-                             "reverse_page_swipes" })
+                             "reverse_page_swipes",
+                             "plugins_enabled" })
         if (preferences.contains(key) && !preferences.value(key).isBool())
             preferences.remove(key);
     for (const auto *key : beautifierKeys)

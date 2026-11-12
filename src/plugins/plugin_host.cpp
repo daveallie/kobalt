@@ -122,7 +122,7 @@ void PluginHost::Worker::open()
         PluginStatus status;
         status.id = name;
         status.name = name;
-        status.folder = path;
+        status.folder = QDir::cleanPath(path);
         Manifest manifest;
         QString error;
         if (!readManifest(path, &manifest, &error)) {
@@ -131,9 +131,6 @@ void PluginHost::Worker::open()
             statuses.append(status);
             continue;
         }
-        status.name = manifest.name;
-        status.version = manifest.version;
-        status.description = manifest.description;
         const QString mismatch = manifestFolderError(name, manifest);
         if (!mismatch.isEmpty()) {
             skipped(path, mismatch);
@@ -141,6 +138,9 @@ void PluginHost::Worker::open()
             statuses.append(status);
             continue;
         }
+        status.name = manifest.name;
+        status.version = manifest.version;
+        status.description = manifest.description;
         if (!switches.enabled || switches.disabled.contains(manifest.id)) {
             status.state = PluginStatus::TurnedOff;
             statuses.append(status);

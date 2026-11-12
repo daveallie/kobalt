@@ -1923,6 +1923,43 @@ bool revealSettingsOption(Fixture &fixture, const char *name)
     return false;
 }
 
+// Points the reader at a plugin folder and a plugin data folder by path.
+std::function<void(ReaderHostServices &)> pluginFolders(const QString &plugins, const QString &data)
+{
+    return [plugins, data](ReaderHostServices &services) {
+        services.pluginDirectory = [plugins] { return plugins; };
+        services.pluginDataDirectory = [data] { return data; };
+        services.pluginFolderLabel = QStringLiteral("the test plugin folder");
+    };
+}
+
+const QString pluginStatusFixtures =
+        QStringLiteral(KOBALT_TEST_PLUGIN_FIXTURES "/../host/statuses");
+
+// Opens Settings > System with the Plugins section in view.
+bool openPluginSettings(Fixture &fixture, const char *row = "rrSystemPluginsSection")
+{
+    return fixture.press("rrPage") && fixture.press("rrSettings")
+            && fixture.press("rrSettingsSystem") && revealSettingsOption(fixture, row);
+}
+
+QString pluginRowStatus(Fixture &fixture, const char *row)
+{
+    auto *button = fixture.widget(row);
+    return button ? button->accessibleDescription() : QString();
+}
+
+void reopenPluginBook(Fixture &fixture)
+{
+    QSignalSpy opened(&fixture.window, &desktop::Window::bookOpened);
+    fixture.window.readerWindow()->close();
+    QTRY_VERIFY(!fixture.window.readerWindow());
+    fixture.window.openBook(book);
+    QTRY_COMPARE_WITH_TIMEOUT(opened.count(), 1, 10000);
+    QTRY_VERIFY(!fixture.state().value("busy").toBool());
+    openPrologueBody(fixture);
+}
+
 void inpageFootnotesTour(Fixture &fixture, const QString &name, bool screenshots)
 {
     const auto scene = [&](const QString &suffix) {
@@ -7128,6 +7165,182 @@ printf '[{"file":"%s.png","scene":"%s"}]' "$3" "$KOBALT_GALLERY_CAPTURE" > "$2/p
         QTRY_VERIFY(dictionaryShown(fixture));
         QCOMPARE(pluginReplies(fixture), 0);
         QVERIFY(!pluginMarkerShown(fixture));
+    }
+
+    // Checks that the Plugins section lists every plugin folder and saved data with its status.
+    void pluginListShowsStatuses()
+    {
+        QTemporaryDir data;
+        QDir(data.path()).mkpath("ghost");
+        Fixture fixture(false, false, false, true, false, false,
+                        pluginFolders(pluginStatusFixtures, data.path()));
+        if (!qEnvironmentVariable("KOBALT_PLUGIN_CAPTURE").isEmpty())
+            selectPreview(fixture, 1);
+        openPluginBook(fixture);
+        QVERIFY(openPluginSettings(fixture, "rrPlugin_ok"));
+        auto *ok = dynamic_cast<ui::CaptionButton *>(fixture.widget("rrPlugin_ok"));
+        QVERIFY(ok);
+        QCOMPARE(ok->text(), QStringLiteral("Okay"));
+        QCOMPARE(pluginRowStatus(fixture, "rrPlugin_ok"), QStringLiteral("Running"));
+        QVERIFY(pluginRowStatus(fixture, "rrPlugin_no_main").startsWith("Not loaded:"));
+        QVERIFY(pluginRowStatus(fixture, "rrPlugin_mismatch_dir")
+                        .contains("folder name must match id"));
+        QVERIFY(pluginRowStatus(fixture, "rrPlugin_load_error").startsWith("Not loaded:"));
+        QCOMPARE(pluginRowStatus(fixture, "rrPlugin_ghost"),
+                 QStringLiteral("Not installed, has saved data"));
+        auto *use = qobject_cast<QCheckBox *>(fixture.widget("rrUsePlugins"));
+        QVERIFY(use && use->isChecked());
+        const auto capture = qEnvironmentVariable("KOBALT_PLUGIN_CAPTURE");
+        if (capture.isEmpty())
+            return;
+        QVERIFY(saveReaderImage(fixture, capture, "plugins-rows"));
+        QVERIFY(revealSettingsOption(fixture, "rrUsePlugins"));
+        QVERIFY(saveReaderImage(fixture, capture, "plugins-section"));
+        QVERIFY(revealSettingsOption(fixture, "rrPlugin_ok"));
+        QVERIFY(fixture.press("rrPlugin_ok"));
+        QTRY_VERIFY(fixture.visible("rrPluginDetails"));
+        QVERIFY(saveReaderImage(fixture, capture, "plugin-details"));
+        QVERIFY(fixture.press("rrPluginDeleteData"));
+        QTRY_VERIFY(fixture.visible("rrPluginDataConfirmation"));
+        QVERIFY(saveReaderImage(fixture, capture, "plugin-delete"));
+    }
+
+    // Checks that turning one plugin off is saved and applies when the next book opens.
+    void pluginSwitchAppliesNextBook()
+    {
+        QTemporaryDir data;
+        Fixture fixture(false, false, false, true, false, false,
+                        pluginFolders(pluginStatusFixtures, data.path()));
+        openPluginBook(fixture);
+        QVERIFY(openPluginSettings(fixture, "rrPlugin_ok"));
+        QVERIFY(fixture.press("rrPlugin_ok"));
+        QTRY_VERIFY(fixture.visible("rrPluginDetails"));
+        auto *enabled = qobject_cast<QCheckBox *>(fixture.widget("rrPluginEnabled"));
+        QVERIFY(enabled && enabled->isChecked());
+        QVERIFY(fixture.press("rrPluginEnabled"));
+        QVERIFY(!enabled->isChecked());
+        QVERIFY(fixture.press("rrPluginDone"));
+        QTRY_VERIFY(!fixture.visible("rrPluginDetails"));
+        QCOMPARE(pluginRowStatus(fixture, "rrPlugin_ok"),
+                 QStringLiteral("Changes apply when the next book opens"));
+        QVERIFY(fixture.press("rrSettingsClose"));
+        QTRY_COMPARE(storage::readJson(fixture.paths.preferences()).value("plugins_disabled"),
+                     QJsonValue(QJsonArray{ "ok" }));
+        // The fixture's "off" plugin also answers, so its entry shows that plugins ran.
+        auto *page = static_cast<ReadingPage *>(fixture.widget("rrPage"));
+        QVERIFY(fixture.selectWord(page, fixture.wordPoint()));
+        QTRY_VERIFY(pluginMarkerShown(fixture));
+        QVERIFY(fixture.press("rrDictionarySelect"));
+        QTRY_VERIFY(!pluginChoice(fixture, QStringLiteral("off")).isEmpty());
+        QVERIFY(!pluginChoice(fixture, QStringLiteral("Okay")).isEmpty());
+        QVERIFY(fixture.press("rrDictionarySelect"));
+        QVERIFY(fixture.press("rrDictionaryClose"));
+        reopenPluginBook(fixture);
+        page = static_cast<ReadingPage *>(fixture.widget("rrPage"));
+        QVERIFY(fixture.selectWord(page, fixture.wordPoint()));
+        QTRY_VERIFY(pluginMarkerShown(fixture));
+        QVERIFY(fixture.press("rrDictionarySelect"));
+        QTRY_VERIFY(!pluginChoice(fixture, QStringLiteral("off")).isEmpty());
+        QVERIFY(pluginChoice(fixture, QStringLiteral("Okay")).isEmpty());
+        QVERIFY(fixture.press("rrDictionarySelect"));
+        QVERIFY(fixture.press("rrDictionaryClose"));
+        QVERIFY(openPluginSettings(fixture, "rrPlugin_ok"));
+        QCOMPARE(pluginRowStatus(fixture, "rrPlugin_ok"), QStringLiteral("Turned off"));
+    }
+
+    // Checks that Use plugins off loads no plugin but keeps the list and data deletion.
+    void usePluginsOff()
+    {
+        QTemporaryDir data;
+        QDir(data.path()).mkpath("ok");
+        Fixture fixture(false, false, false, true, false, false,
+                        pluginFolders(pluginStatusFixtures, data.path()));
+        openPluginBook(fixture);
+        QVERIFY(openPluginSettings(fixture, "rrUsePlugins"));
+        QVERIFY(fixture.press("rrUsePlugins"));
+        QVERIFY(fixture.press("rrSettingsClose"));
+        QTRY_COMPARE(storage::readJson(fixture.paths.preferences()).value("plugins_enabled"),
+                     QJsonValue(false));
+        reopenPluginBook(fixture);
+        auto *page = static_cast<ReadingPage *>(fixture.widget("rrPage"));
+        QVERIFY(fixture.selectWord(page, fixture.wordPoint()));
+        QTRY_VERIFY(dictionaryShown(fixture));
+        QTest::qWait(50);
+        QVERIFY(!pluginMarkerShown(fixture));
+        QVERIFY(fixture.press("rrDictionaryClose"));
+        QVERIFY(openPluginSettings(fixture, "rrPlugin_ok"));
+        QCOMPARE(pluginRowStatus(fixture, "rrPlugin_ok"), QStringLiteral("Turned off"));
+        QVERIFY(fixture.press("rrPlugin_ok"));
+        QTRY_VERIFY(fixture.visible("rrPluginDetails"));
+        QVERIFY(fixture.press("rrPluginDeleteData"));
+        QTRY_VERIFY(fixture.visible("rrPluginDataConfirmation"));
+        QVERIFY(fixture.press("rrConfirmDeletePluginData"));
+        QTRY_VERIFY(!QDir(data.path() + "/ok").exists());
+    }
+
+    // Checks that deleting saved data asks first, and Cancel keeps it.
+    void pluginDeleteData()
+    {
+        QTemporaryDir data;
+        QDir(data.path()).mkpath("ok");
+        Fixture fixture(false, false, false, true, false, false,
+                        pluginFolders(pluginStatusFixtures, data.path()));
+        openPluginBook(fixture);
+        QVERIFY(openPluginSettings(fixture, "rrPlugin_ok"));
+        QVERIFY(fixture.press("rrPlugin_ok"));
+        QTRY_VERIFY(fixture.visible("rrPluginDetails"));
+        QVERIFY(fixture.press("rrPluginDeleteData"));
+        QTRY_VERIFY(fixture.visible("rrPluginDataConfirmation"));
+        QVERIFY(fixture.press("rrKeepPluginData"));
+        QTRY_VERIFY(!fixture.visible("rrPluginDataConfirmation"));
+        QVERIFY(QDir(data.path() + "/ok").exists());
+        QVERIFY(fixture.press("rrPluginDeleteData"));
+        QTRY_VERIFY(fixture.visible("rrPluginDataConfirmation"));
+        QVERIFY(fixture.press("rrConfirmDeletePluginData"));
+        QTRY_VERIFY(!QDir(data.path() + "/ok").exists());
+    }
+
+    // Checks that saved data without a plugin folder has a row that offers only deletion.
+    void pluginDataOnlyRow()
+    {
+        QTemporaryDir data;
+        QDir(data.path()).mkpath("ghost");
+        Fixture fixture(false, false, false, true, false, false,
+                        pluginFolders(pluginStatusFixtures, data.path()));
+        openPluginBook(fixture);
+        QVERIFY(openPluginSettings(fixture, "rrPlugin_ghost"));
+        QVERIFY(fixture.press("rrPlugin_ghost"));
+        QTRY_VERIFY(fixture.visible("rrPluginDetails"));
+        QVERIFY(!fixture.visible("rrPluginEnabled"));
+        QVERIFY(fixture.visible("rrPluginDeleteData"));
+        QVERIFY(fixture.press("rrPluginDeleteData"));
+        QVERIFY(fixture.press("rrConfirmDeletePluginData"));
+        QTRY_VERIFY(!QDir(data.path() + "/ghost").exists());
+        QTRY_VERIFY(!fixture.widget("rrPlugin_ghost"));
+    }
+
+    // Checks that an empty plugin folder explains how to install a plugin.
+    void pluginSectionEmpty()
+    {
+        QTemporaryDir plugins, data;
+        Fixture fixture(false, false, false, true, false, false,
+                        pluginFolders(plugins.path(), data.path()));
+        openPluginBook(fixture);
+        QVERIFY(openPluginSettings(fixture, "rrPluginsInstallHint"));
+        auto *hint = qobject_cast<QLabel *>(fixture.widget("rrPluginsInstallHint"));
+        QVERIFY(hint && hint->text().contains("the test plugin folder"));
+    }
+
+    // Checks that a host without a plugin folder has no Plugins section.
+    void pluginSectionHidden()
+    {
+        Fixture fixture(false, false, false, true, false, false, pluginServices({}));
+        openPluginBook(fixture);
+        QVERIFY(fixture.press("rrPage"));
+        QVERIFY(fixture.press("rrSettings"));
+        QVERIFY(fixture.press("rrSettingsSystem"));
+        QVERIFY(!fixture.widget("rrSystemPluginsSection"));
+        QVERIFY(!fixture.widget("rrUsePlugins"));
     }
 
     // Checks word lookup with adjustment handles, then entering annotation mode and saving the range, for one density and theme.

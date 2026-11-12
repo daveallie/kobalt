@@ -22,6 +22,8 @@ class AboutPage;
 }
 
 namespace kobalt::reader {
+class PluginsSection;
+
 // The brand-face title of a full-screen settings page. It sits where the
 // word "Settings" sits, so every page title shares one baseline.
 class SettingsTitle final : public ui::InterfaceLabel
@@ -59,6 +61,9 @@ struct SettingsPanelInputs
     // The host can turn Wi-Fi off when a book opens, or previews a host that can.
     bool wifiPowerSaverSupported = false;
     bool readerStandbySupported = false;
+    // The host has a plugin folder; Settings lists plugins only then.
+    bool plugins = false;
+    QString pluginFolderLabel;
 };
 
 // Qt parents own every widget. Reader installs policy callbacks after construction.
@@ -191,6 +196,8 @@ public:
     QPushButton *openAcknowledgments = nullptr, *debugProgress = nullptr;
     DictionariesPage *dictionaries = nullptr;
     KosyncPage *kosync = nullptr;
+    // Null when the host has no plugin folder.
+    PluginsSection *pluginsSection = nullptr;
     QLabel *settingsError = nullptr;
 
 protected:

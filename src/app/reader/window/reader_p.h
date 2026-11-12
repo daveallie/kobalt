@@ -51,6 +51,7 @@
 #include "platform/api/reader_host_services.h"
 #include "platform/api/reader_orientation.h"
 #include "plugins/plugin_host.h"
+#include "plugins/plugin_switches.h"
 #include "ui/panel_timing.h"
 #include "render/screen_refresh.h"
 #include "support/main_thread.h"
@@ -686,6 +687,8 @@ private:
     void askPlugins(const QString &query);
     // Numbers plugin lookups, so that a card for an earlier one is dropped.
     quint64 pluginRequest = 0;
+    // The switches this book's plugins loaded with.
+    kobalt::plugins::Switches appliedPluginSwitches;
     void resizeText();
     // The host's cutout and corner bands for the current size.
     kobalt::SafeArea safeArea() const;

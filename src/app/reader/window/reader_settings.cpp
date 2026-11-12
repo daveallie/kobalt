@@ -5,6 +5,7 @@
 #include "ui/controls/icons.h"
 #include "ui/style/theme.h"
 #include "reader_p.h"
+#include "app/reader/settings/plugins_section.h"
 #include "ui/style/styles.h"
 #include "support/strings.h"
 #include "ui/style/fonts.h"
@@ -382,6 +383,8 @@ void Reader::openSettings()
     darkOption->setChecked(session->state().value("dark_mode").toBool(false));
     static_cast<SettingsPanel *>(general)->openingCoverOption->setChecked(
             !preferences.value("show_opening_cover").toBool(true));
+    if (auto *section = static_cast<SettingsPanel *>(general)->pluginsSection)
+        section->setDraft(kobalt::plugins::switchesFrom(preferences));
     static_cast<SettingsPanel *>(general)->featurePreferences = preferences;
     static_cast<SettingsPanel *>(general)->updateFeatureOptions();
     showTextPresetSettings();
@@ -813,6 +816,8 @@ void Reader::applySettings()
     next["show_opening_cover"] =
             !static_cast<SettingsPanel *>(general)->openingCoverOption->isChecked();
     next["dense_stats_chart"] = denseGraphOption->isChecked();
+    if (auto *section = static_cast<SettingsPanel *>(general)->pluginsSection)
+        kobalt::plugins::storeSwitches(next, section->draft());
     next.remove(pageNavigation::barVisibleKey);
     next["minimal_annotation_mode"] = minimalAnnotationOption->isChecked();
     next["screen_refresh"] = kobalt::screenRefreshValue(screenRefreshMode);

@@ -104,6 +104,8 @@ struct ReaderHostServices
     // Optional resolver of the folder that holds plugin data, run on the plugin
     // thread; an unset resolver or an empty result means plugins save nothing.
     std::function<QString()> pluginDataDirectory;
+    // Where the user copies plugins, as Settings names it.
+    QString pluginFolderLabel;
     // False where books have no files beside them, so plugins cannot read sidecars.
     bool bookSidecars = true;
     // Optional host reader-selection preference. Both callbacks are supplied
