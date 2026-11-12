@@ -6,6 +6,8 @@ namespace kobalt::plugins {
 struct Book
 {
     QString identity, title, language;
+    // BookmarkStore::bookKey, which keeps a sideloaded book's data when its file moves.
+    QString key;
 };
 
 struct Position

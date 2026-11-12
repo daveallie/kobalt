@@ -1,4 +1,5 @@
 #include "plugins/lua_plugin.h"
+#include "plugins/plugin_store.h"
 
 #include "check.h"
 #include "support/diagnostics.h"
@@ -32,7 +33,8 @@ Manifest manifest(const QString &directory)
 
 Book book()
 {
-    return { QStringLiteral("id"), QStringLiteral("Wolf Hall"), QStringLiteral("en") };
+    return { QStringLiteral("id"), QStringLiteral("Wolf Hall"), QStringLiteral("en"),
+             QStringLiteral("key") };
 }
 
 Lookup lookup(const QString &word)
@@ -553,6 +555,30 @@ void requireSizeLimit()
     require(askHtml(plugin, "big").contains("too large"), "A module over 1 MiB was loaded");
 }
 
+void storeBindings()
+{
+    QTemporaryDir root;
+    PluginStore store(root.path(), "store", "book");
+    store.load();
+    LuaPlugin plugin(manifest(fixture("store")), {});
+    plugin.setStore(&store);
+    loaded(plugin);
+    for (const char *word : { "types", "refused", "copy" }) {
+        const QString result = askHtml(plugin, word);
+        if (result != "ok")
+            std::fprintf(stderr, "%s: %s\n", word, qPrintable(result));
+        require(result == "ok", "A store case failed");
+    }
+    require(store.value(PluginStore::Scope::Global, "b") == "true",
+            "kobalt.store did not write the global store");
+    require(store.value(PluginStore::Scope::Book, "t") == "{\"n\":1}",
+            "kobalt.book_store did not write the book store");
+
+    LuaPlugin storeless(manifest(fixture("store")), {});
+    loaded(storeless);
+    require(askHtml(storeless, "nostore") == "ok", "A plugin without a store stored a value");
+}
+
 void manifestValidation()
 {
     const auto valid = manifest(fixture("echo"));
@@ -634,5 +660,6 @@ int main(int argc, char **argv)
     requireCycle();
     requireUnderBudget();
     requireSizeLimit();
+    storeBindings();
     puts("PASS: Lua plugins run in a sandbox");
 }

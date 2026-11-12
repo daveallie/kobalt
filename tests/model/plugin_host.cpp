@@ -70,10 +70,10 @@ std::unique_ptr<PluginHost> open(PluginHost::Directory directory, int joinLimitM
 {
     std::unique_ptr<PluginHost> host;
     inEvent([&] {
-        host.reset(new PluginHost(
-                std::move(directory), Context(),
-                { QStringLiteral("id"), QStringLiteral("Wolf Hall"), QStringLiteral("en") },
-                joinLimitMs));
+        host.reset(new PluginHost(std::move(directory), Context(),
+                                  { QStringLiteral("id"), QStringLiteral("Wolf Hall"),
+                                    QStringLiteral("en"), QStringLiteral("key") },
+                                  joinLimitMs));
     });
     return host;
 }

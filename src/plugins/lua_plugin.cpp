@@ -1,5 +1,7 @@
 #include "lua_plugin.h"
 
+#include "plugin_store.h"
+
 #include "support/diagnostics.h"
 
 #include <QDir>
@@ -124,6 +126,97 @@ bool pushJson(lua_State *state, const QJsonValue &value, int depth, const Memory
         lua_pushnil(state);
         return true;
     }
+}
+
+// Converts the value at `index` without raising Lua errors; false, with `error`, when it
+// is not JSON: a function, a cycle, a non-finite number or a table that is neither a
+// list 1..n nor keyed by strings.
+bool luaToJson(lua_State *state, int index, QJsonValue *out, QString *error, int depth)
+{
+    index = lua_absindex(state, index);
+    if (depth > 512 || !lua_checkstack(state, 4)) {
+        *error = QStringLiteral("the value is nested too deeply or refers to itself");
+        return false;
+    }
+    switch (lua_type(state, index)) {
+    case LUA_TBOOLEAN:
+        *out = bool(lua_toboolean(state, index));
+        return true;
+    case LUA_TNUMBER:
+        if (lua_isinteger(state, index)) {
+            const lua_Integer integer = lua_tointeger(state, index);
+            if (integer > 9007199254740992LL || integer < -9007199254740992LL) {
+                *error = QStringLiteral("integers must be within 2^53");
+                return false;
+            }
+            *out = double(integer);
+            return true;
+        }
+        if (!std::isfinite(lua_tonumber(state, index))) {
+            *error = QStringLiteral("numbers must be finite");
+            return false;
+        }
+        *out = lua_tonumber(state, index);
+        return true;
+    case LUA_TSTRING:
+        *out = text(state, index);
+        return true;
+    case LUA_TTABLE:
+        break;
+    default:
+        *error = QStringLiteral("values must be nil, booleans, numbers, strings or tables");
+        return false;
+    }
+    lua_Integer strings = 0, integers = 0, largest = 0;
+    lua_pushnil(state);
+    while (lua_next(state, index)) {
+        lua_pop(state, 1);
+        if (lua_type(state, -1) == LUA_TSTRING) {
+            ++strings;
+        } else if (lua_isinteger(state, -1) && lua_tointeger(state, -1) > 0) {
+            ++integers;
+            largest = qMax(largest, lua_tointeger(state, -1));
+        } else {
+            lua_pop(state, 1);
+            *error = QStringLiteral("table keys must be strings or the integers 1 to n");
+            return false;
+        }
+    }
+    if (strings > 0 && integers > 0) {
+        *error = QStringLiteral("a table cannot mix string keys with list items");
+        return false;
+    }
+    if (integers > 0) {
+        if (largest != integers) {
+            *error = QStringLiteral("a list cannot have holes");
+            return false;
+        }
+        QJsonArray array;
+        for (lua_Integer i = 1; i <= integers; ++i) {
+            lua_rawgeti(state, index, i);
+            QJsonValue item;
+            const bool ok = luaToJson(state, -1, &item, error, depth + 1);
+            lua_pop(state, 1);
+            if (!ok)
+                return false;
+            array.append(item);
+        }
+        *out = array;
+        return true;
+    }
+    QJsonObject object;
+    lua_pushnil(state);
+    while (lua_next(state, index)) {
+        QJsonValue item;
+        if (!luaToJson(state, -1, &item, error, depth + 1)) {
+            lua_pop(state, 2);
+            return false;
+        }
+        object.insert(text(state, -2), item);
+        lua_pop(state, 1);
+    }
+    *out = object;
+    return true;
 }
 
 // load() that accepts only text chunks; the original is upvalue 1.
@@ -523,6 +616,68 @@ int LuaPlugin::requireModule(lua_State *state)
     return 1;
 }
 
+void LuaPlugin::setStore(PluginStore *value)
+{
+    store = value;
+}
+
+// Upvalue 1 is the scope: 0 for kobalt.store, 1 for kobalt.book_store.
+int LuaPlugin::storeGet(lua_State *state)
+{
+    luaL_checkstring(state, 1);
+    const auto scope = lua_tointeger(state, lua_upvalueindex(1)) == 0 ? PluginStore::Scope::Global
+                                                                      : PluginStore::Scope::Book;
+    LuaPlugin *plugin = owner(state);
+    const Unenforced unenforced(state);
+    bool pushed = true;
+    {
+        const QByteArray json =
+                plugin->store ? plugin->store->value(scope, text(state, 1)) : QByteArray();
+        lua_settop(state, 0);
+        if (json.isEmpty())
+            lua_pushnil(state);
+        else
+            pushed = pushJson(state, PluginStore::decode(json), 0, plugin->memory);
+    }
+    if (!pushed || plugin->memory.used > plugin->memory.cap) {
+        lua_settop(state, 0);
+        lua_gc(state, LUA_GCCOLLECT);
+        lua_pushnil(state);
+        lua_pushliteral(state, "the value exceeds the plugin memory limit");
+        return 2;
+    }
+    return 1;
+}
+
+int LuaPlugin::storeSet(lua_State *state)
+{
+    luaL_checkstring(state, 1);
+    lua_settop(state, 2);
+    const auto scope = lua_tointeger(state, lua_upvalueindex(1)) == 0 ? PluginStore::Scope::Global
+                                                                      : PluginStore::Scope::Book;
+    LuaPlugin *plugin = owner(state);
+    const Unenforced unenforced(state);
+    QString error;
+    bool ok = false;
+    {
+        QJsonValue value;
+        const bool isNil = lua_isnil(state, 2);
+        if (!plugin->store)
+            error = QStringLiteral("no plugin data folder");
+        else if (isNil || luaToJson(state, 2, &value, &error, 0))
+            ok = plugin->store->set(scope, text(state, 1),
+                                    isNil ? QByteArray() : PluginStore::encode(value), &error);
+    }
+    lua_settop(state, 0);
+    if (ok) {
+        lua_pushboolean(state, 1);
+        return 1;
+    }
+    lua_pushnil(state);
+    push(state, error);
+    return 2;
+}
+
 int LuaPlugin::readSidecar(lua_State *state)
 {
     luaL_checkstring(state, 1);
@@ -600,6 +755,16 @@ bool LuaPlugin::load(QString *error)
     lua_setfield(state, -2, "read_file");
     lua_pushcfunction(state, log);
     lua_setfield(state, -2, "log");
+    for (const lua_Integer scope : { 0, 1 }) {
+        lua_createtable(state, 0, 2);
+        lua_pushinteger(state, scope);
+        lua_pushcclosure(state, storeGet, 1);
+        lua_setfield(state, -2, "get");
+        lua_pushinteger(state, scope);
+        lua_pushcclosure(state, storeSet, 1);
+        lua_setfield(state, -2, "set");
+        lua_setfield(state, -2, scope == 0 ? "store" : "book_store");
+    }
     lua_setglobal(state, "kobalt");
     lua_newtable(state);
     lua_rawsetp(state, LUA_REGISTRYINDEX, &modulesKey);

@@ -698,7 +698,7 @@ if(BUILD_TESTING)
         layout_cache resource_cache layout_compatibility reading_pace reading_speed engine_activity
         local_resources zip_resource diagnostics crash_reports dictionary_store image_damage page_pixels
         logical_word_counter brightness_gesture qt_compat page_refresh_regions screen_refresh plain_archive reading_progress
-        library kosync sync_coordinator annotation_draft chapter_progress style_sample_cache preview_store save_wait saved_words lua_runtime plugin_position plugin_runtime plugin_host)
+        library kosync sync_coordinator annotation_draft chapter_progress style_sample_cache preview_store save_wait saved_words lua_runtime plugin_position plugin_runtime plugin_host plugin_store)
     kobalt_regressions(model font_axes touch_rotation)
     kobalt_regressions(platform reader_orientation font_sources system_fonts nickel_dictionary_selection
         nickel_reading_pace_cache nickel_reading_save nickel_event_save nickel_account nickel_session_calls nickel_session_volume nickel_book_menu nickel_font_scale native_progress native_sync_network native_dialog_overlay native_lifecycle standby_input standby_diagnostics usb_removal page_transition_native page_animation)

@@ -9,6 +9,8 @@ struct lua_State;
 struct lua_Debug;
 
 namespace kobalt::plugins {
+class PluginStore;
+
 struct Manifest
 {
     QString id, name, version, description, directory;
@@ -55,6 +57,8 @@ public:
     // While *abort is true, a running hook stops at its next budget check and
     // cannot make allocations larger than 64 KiB, so it fails.
     void setAbort(const std::atomic_bool *abort);
+    // Backs kobalt.store and kobalt.book_store; not owned. Without one, set fails.
+    void setStore(PluginStore *store);
 
     struct Memory
     {
@@ -92,6 +96,8 @@ private:
     static int readSidecar(lua_State *state);
     static int log(lua_State *state);
     static int requireModule(lua_State *state);
+    static int storeGet(lua_State *state);
+    static int storeSet(lua_State *state);
     // Pushes the module's chunk, or an error message and returns false.
     static bool loadModule(lua_State *state, const QString &name);
     static LuaPlugin *owner(lua_State *state);
@@ -105,5 +111,6 @@ private:
     const std::atomic_bool *abort = nullptr;
     Memory memory;
     lua_State *state = nullptr;
+    PluginStore *store = nullptr;
 };
 } // namespace kobalt::plugins
