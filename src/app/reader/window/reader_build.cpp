@@ -477,13 +477,9 @@ void Reader::buildReadingPage()
         dictionaryPanel->open(lookupText, result, lookupBounds);
         // An edited word keeps the sentence and position of the selection.
         recordLookup(lookupText, result);
+        askPlugins(lookupText);
     };
     dictionaryPanel->searchRequested = [this](const QString &query) { openSearch(query); };
-    dictionaryPanel->dictionaryRequested = [this](const QString &query) {
-        if (lifecycleHidden || services.suspended() || closing)
-            return;
-        openDictionary(query, kobalt::ui::PanelTiming("dictionary"));
-    };
     if (services.pluginDirectory) {
         const QUrl source(book->identity());
         kobalt::plugins::Context context;

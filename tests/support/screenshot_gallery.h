@@ -171,6 +171,7 @@ inline const QMap<QString, QString> &screenshotTitles()
         { "dictionary-choices", "Choose a dictionary" },
         { "dictionary-definition", "Dictionary definition" },
         { "dictionary-definition-page-2", "Dictionary definition · Page 2" },
+        { "dictionary-plugin-choice", "Plugin choice" },
         { "dictionary-plugin-card", "Plugin card" },
         { "dictionary-edit", "Edit a lookup" },
         { "dictionary-font-sizes", "Dictionary text size" },

@@ -106,8 +106,6 @@ struct ReaderHostServices
     std::function<QString()> pluginDataDirectory;
     // False where books have no files beside them, so plugins cannot read sidecars.
     bool bookSidecars = true;
-    // How long a lookup waits for a plugin card before the dictionary opens; tests shorten it.
-    int pluginLookupTimeoutMs = 300;
     // Optional host reader-selection preference. Both callbacks are supplied
     // together; a successful write affects future book openings.
     std::function<bool()> automaticBookOpening;

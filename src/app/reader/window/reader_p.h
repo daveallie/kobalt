@@ -683,8 +683,9 @@ private:
     void openDictionary(const QString &query, kobalt::ui::PanelTiming timing);
     // Destroyed in ~Reader, where joining its thread may block.
     std::unique_ptr<kobalt::plugins::PluginHost> plugins;
-    void finishPluginLookup(quint64 epoch, const kobalt::plugins::Card &card,
-                            kobalt::ui::PanelTiming timing);
+    void askPlugins(const QString &query);
+    // Numbers plugin lookups, so that a card for an earlier one is dropped.
+    quint64 pluginRequest = 0;
     void resizeText();
     // The host's cutout and corner bands for the current size.
     kobalt::SafeArea safeArea() const;

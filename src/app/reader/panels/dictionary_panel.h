@@ -21,8 +21,6 @@ public:
     std::function<void()> dismissed;
     std::function<void(QString)> chosen;
     std::function<void(QString)> requested, searchRequested;
-    // The card's book cell asks for the normal definition of the pressed word.
-    std::function<void(QString)> dictionaryRequested;
     std::function<void(const QFont &)> prepareEditorFont;
     // The My Words cell: a check when the word is saved, a plus otherwise.
     // Hidden while `available` is false, such as without a definition.
@@ -37,8 +35,10 @@ public:
     static int definitionLineHeight(int percent, bool customFont = false);
     void setDefinitionFont(const QString &family, int percent);
     void open(const QString &word, const DictionaryResult &result, const QRect &selection);
-    // A plugin card in place of a definition, for the pressed `word`.
-    void openCard(const QString &word, const plugins::Card &card, const QRect &selection);
+    // Adds a plugin's answer to the chooser and marks the chooser button; a card from the
+    // same plugin replaces its earlier one.
+    void addPluginCard(const plugins::Card &card);
+    void clearPluginCards();
     void place(const QRect &selection);
     void dismiss();
     static QString formatDefinition(const QString &html);
@@ -53,7 +53,9 @@ private:
     ui::PagerBar *pages, *choicesPaging;
     std::unique_ptr<KeyboardController> keyboard;
     // On a narrow sheet, `actions` opens a menu with edit, search and save.
-    ui::CellButton *dictionary, *close, *edit, *submit, *search, *save, *actions, *pluginLookup;
+    ui::CellButton *dictionary, *close, *edit, *submit, *search, *save, *actions;
+    // Marks the chooser button while a plugin card is available.
+    QWidget *pluginMarker;
     QPointer<ui::ModalOverlay> actionMenu;
     void openActions();
     bool saved = false, saveAvailable = false;
@@ -62,7 +64,21 @@ private:
     bool editing = false;
     bool showingCard = false;
     QLabel *headword, *editHint;
-    QString word, cardWord, bookFamily, language, definitionFamily;
+    QString word, bookFamily, language, definitionFamily;
+    QVector<plugins::Card> cards;
+
+    // The definition shown before a card was chosen, restored when its dictionary is chosen.
+    struct Definition
+    {
+        QString word, html, source, dictionaryId;
+    } beforeCard;
+
+    // The source of the definition the sheet opened with, so that the chooser can always
+    // lead back to it, even when no installed dictionary lists it.
+    DictionaryChoice definitionChoice;
+    void showCard(const plugins::Card &card);
+    void restoreDefinition();
+    void placeMarker();
     QString definitionHtml, sourceText, renderedHtml;
     int definitionPercent = 100;
     QFont headwordFont;

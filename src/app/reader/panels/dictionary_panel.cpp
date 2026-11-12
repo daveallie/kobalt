@@ -15,6 +15,7 @@
 #include "ui/style/fonts.h"
 #include "ui/style/private_text.h"
 #include <QPainter>
+#include <algorithm>
 #include <QRawFont>
 #include <QRegularExpression>
 #include <QGuiApplication>
@@ -47,6 +48,29 @@ protected:
 
 private:
     bool columnDivider;
+};
+
+// An ink dot with a paper ring, so it reads over the icon it overlaps.
+class PluginMarker final : public QWidget
+{
+public:
+    explicit PluginMarker(QWidget *parent) : QWidget(parent)
+    {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+    }
+
+    static int diameter() { return ui::px(20); }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        const qreal ring = metrics::control::border;
+        painter.setPen(QPen(palette().color(QPalette::Window), ring));
+        painter.setBrush(palette().color(QPalette::WindowText));
+        painter.drawEllipse(QRectF(rect()).adjusted(ring / 2, ring / 2, -ring / 2, -ring / 2));
+    }
 };
 } // namespace
 
@@ -147,15 +171,10 @@ DictionaryPanel::DictionaryPanel(QWidget *parent, KeyboardFactory makeKeyboard)
     actions->setAccessibleName(strings::get("dictionary_panel.actions"));
     actions->hide();
     connect(actions, &QPushButton::clicked, this, [this] { openActions(); });
-    pluginLookup = new ui::CellButton(ui::ControlIcon::Dictionary, this);
-    pluginLookup->setObjectName("rrDictionaryPluginLookup");
-    pluginLookup->setAccessibleName(strings::get("dictionary_panel.open_dictionary"));
-    pluginLookup->setRule(Qt::LeftEdge);
-    pluginLookup->hide();
-    connect(pluginLookup, &QPushButton::clicked, this, [this] {
-        if (dictionaryRequested && !cardWord.isEmpty())
-            dictionaryRequested(cardWord);
-    });
+    pluginMarker = new PluginMarker(dictionary);
+    pluginMarker->setObjectName("rrDictionaryPluginMarker");
+    pluginMarker->setAccessibleName(strings::get("dictionary_panel.plugin_answer"));
+    pluginMarker->hide();
     text = new ui::PagedText(this);
     text->setObjectName("rrDefinition");
     text->setTextFont(ui::interfaceFont(chrome::labelText));
@@ -284,7 +303,6 @@ void DictionaryPanel::open(const QString &word, const DictionaryResult &result,
 {
     finishEditing(false);
     showingCard = false;
-    cardWord.clear();
     setAccessibleName(strings::get("dictionary_panel.definition_for").arg(word));
     setHeadword(word);
     const auto dictionaryName = result.dictionary.isEmpty()
@@ -292,7 +310,10 @@ void DictionaryPanel::open(const QString &word, const DictionaryResult &result,
             : result.dictionary;
     dictionary->setAccessibleDescription(dictionaryName);
     dictionary->setToolTip(dictionaryName);
-    currentId = result.dictionaryId;
+    definitionChoice = { result.dictionaryId.isEmpty() ? QStringLiteral("definition:")
+                                                       : result.dictionaryId,
+                         dictionaryName };
+    currentId = definitionChoice.id;
     dropdown->hide();
     const auto note = QString("font-size:%1px;color:%2;")
                               .arg(int(chrome::descriptionText))
@@ -341,23 +362,71 @@ void DictionaryPanel::dismiss()
     text->clear();
 }
 
-void DictionaryPanel::openCard(const QString &word, const plugins::Card &card,
-                               const QRect &selection)
+void DictionaryPanel::addPluginCard(const plugins::Card &card)
 {
+    bool replaced = false;
+    for (auto &existing : cards)
+        if (existing.pluginId == card.pluginId) {
+            existing = card;
+            replaced = true;
+        }
+    if (!replaced)
+        cards.append(card);
+    // Only the chooser button changes, so the definition keeps its pixels.
+    dictionary->setEnabled(!editing && (options.size() > 1 || !cards.isEmpty()));
+    placeMarker();
+    pluginMarker->show();
+    if (dropdown->isVisible())
+        redrawChoices();
+}
+
+void DictionaryPanel::clearPluginCards()
+{
+    cards.clear();
+    pluginMarker->hide();
+    dictionary->setEnabled(!editing && options.size() > 1);
+    if (showingCard)
+        restoreDefinition();
+}
+
+void DictionaryPanel::showCard(const plugins::Card &card)
+{
+    if (!showingCard)
+        beforeCard = { word, definitionHtml, sourceText, currentId };
     finishEditing(false);
     showingCard = true;
-    cardWord = word.simplified();
+    currentId = QStringLiteral("plugin:") + card.pluginId;
     setAccessibleName(strings::get("dictionary_panel.plugin_card_for").arg(card.title));
     setHeadword(card.title);
-    dropdown->hide();
     definitionHtml = formatDefinition(card.html);
     sourceText = card.footer;
     renderedHtml.clear();
     text->setPage(0);
-    place(selection);
-    show();
-    raise();
     arrange();
+}
+
+void DictionaryPanel::restoreDefinition()
+{
+    showingCard = false;
+    currentId = beforeCard.dictionaryId;
+    setAccessibleName(strings::get("dictionary_panel.definition_for").arg(beforeCard.word));
+    setHeadword(beforeCard.word);
+    definitionHtml = beforeCard.html;
+    sourceText = beforeCard.source;
+    renderedHtml.clear();
+    text->setPage(0);
+    arrange();
+}
+
+// Sits on the top-right corner of the chooser's dictionary icon.
+void DictionaryPanel::placeMarker()
+{
+    const int icon = metrics::chrome::cellIcon;
+    const int indicator = metrics::chrome::selectorIcon;
+    const int size = PluginMarker::diameter();
+    const int iconLeft = (dictionary->width() - icon - ui::px(8) - indicator) / 2;
+    const int iconTop = (dictionary->height() - icon) / 2;
+    pluginMarker->setGeometry(iconLeft + icon - size * 2 / 3, iconTop - size / 3, size, size);
 }
 
 QFont DictionaryPanel::bookFont(int pixels) const
@@ -467,7 +536,7 @@ void DictionaryPanel::setLanguage(const QString &value)
 void DictionaryPanel::setChoices(QVector<DictionaryChoice> values)
 {
     options = std::move(values);
-    dictionary->setEnabled(!editing && options.size() > 1);
+    dictionary->setEnabled(!editing && (options.size() > 1 || !cards.isEmpty()));
 }
 
 void DictionaryPanel::resizeEvent(QResizeEvent *)
@@ -562,6 +631,7 @@ void DictionaryPanel::arrange()
 {
     // A narrow sheet keeps the word whole: edit, search and save share one menu.
     const bool compact = !editing && !showingCard && isNarrowWidth(width(), ui::density());
+    // A card shows only the chooser, which leads back to the definition, and close.
     headword->setVisible(!editing);
     edit->setVisible(!editing && !compact && !showingCard);
     actions->setVisible(compact);
@@ -571,24 +641,21 @@ void DictionaryPanel::arrange()
     search->setVisible(!editing && !compact && !showingCard);
     const bool saving = !editing && saveAvailable && !compact && !showingCard;
     save->setVisible(saving);
-    dictionary->setVisible(!showingCard);
-    pluginLookup->setVisible(showingCard);
+    dictionary->setVisible(true);
     close->setAccessibleName(strings::get(editing ? "dictionary_panel.cancel_edit"
                                                   : "dictionary_panel.close_definition"));
-    dictionary->setEnabled(!editing && options.size() > 1);
+    dictionary->setEnabled(!editing && (options.size() > 1 || !cards.isEmpty()));
     const int top = rowTop(), bottom = contentBottom();
     // The word leads the row, like a printed entry. The dictionary sits beside close.
     // Compact action cells leave room for the word. Close keeps its usual width.
     const int cell = chrome::compactCellWidth;
     const int closeWidth = isNarrowWidth(width(), ui::density()) ? int(chrome::compactCellWidth)
                                                                  : int(chrome::cellWidth);
-    // A plugin card has only its book cell beside close, in the search cell's place.
-    int selectorWidth =
-            showingCard ? 0 : dictionary->sizeHint().width() - (int(chrome::cellWidth) - cell);
-    const int actionCells = editing || compact || showingCard ? 2 : saving ? 4 : 3;
+    int selectorWidth = dictionary->sizeHint().width() - (int(chrome::cellWidth) - cell);
+    const int actionCells = editing || compact ? 2 : showingCard ? 1 : saving ? 4 : 3;
     const int wordRoom = width() - (actionCells - 1) * cell - closeWidth - 2 * int(chrome::inset);
     const int wordWanted = qMin(ui::interfaceTextWidth(word, headwordFont), width() / 2);
-    if (!showingCard && wordRoom - selectorWidth < wordWanted)
+    if (wordRoom - selectorWidth < wordWanted)
         selectorWidth =
                 qMin(selectorWidth, dictionary->widthForLabel(qMax(cell, wordRoom - wordWanted)));
     const int selectorLeft = width() - closeWidth - selectorWidth;
@@ -596,11 +663,11 @@ void DictionaryPanel::arrange()
     close->setGeometry(width() - closeWidth, top, closeWidth, chrome::actionHeight);
     save->setGeometry(selectorLeft - cell, top, cell, chrome::actionHeight);
     actions->setGeometry(selectorLeft - cell, top, cell, chrome::actionHeight);
-    const int editorLeft = selectorLeft - (saving ? 2 : 1) * cell;
+    const int editorLeft = showingCard ? selectorLeft : selectorLeft - (saving ? 2 : 1) * cell;
     const int editLeft = editorLeft - (editing || compact || showingCard ? 0 : cell);
     edit->setGeometry(editLeft, top, cell, chrome::actionHeight);
     search->setGeometry(editorLeft, top, cell, chrome::actionHeight);
-    pluginLookup->setGeometry(search->geometry());
+    placeMarker();
     submit->setGeometry(search->geometry());
     query->setGeometry(0, top, qMax(1, editorLeft), chrome::actionHeight);
     const int wordWidth = qMax(1, editLeft - 2 * chrome::inset);
@@ -663,7 +730,17 @@ void DictionaryPanel::redrawChoices(bool atCurrent)
             contentBottom() - rowTop() - chrome::actionHeight - 2 * metrics::control::border;
     const int usable =
             qMax(int(metrics::list::headerHeight) + rowHeight, available - chrome::actionHeight);
+    QVector<DictionaryChoice> all = options;
+    if (!cards.isEmpty()
+        && std::none_of(options.cbegin(), options.cend(), [this](const DictionaryChoice &choice) {
+               return choice.id == definitionChoice.id;
+           }))
+        all.prepend(definitionChoice);
+    for (const auto &card : cards)
+        all.append({ QStringLiteral("plugin:") + card.pluginId, card.pluginName });
     const auto heading = [this](const DictionaryChoice &choice) {
+        if (choice.id.startsWith(QLatin1String("plugin:")))
+            return strings::get("dictionary_panel.plugins_heading");
         if (language.isEmpty() || QLocale(language).language() == QLocale::C)
             return strings::get("dictionaries.section_installed");
         if (!choice.fallback && !choice.language.isEmpty() && choice.language != language)
@@ -671,8 +748,8 @@ void DictionaryPanel::redrawChoices(bool atCurrent)
         return strings::get("dictionary_panel.for_language")
                 .arg(DictionaryManager::languageName(language));
     };
-    for (int i = 0; i < options.size(); ++i) {
-        const QString caption = heading(options[i]);
+    for (int i = 0; i < all.size(); ++i) {
+        const QString caption = heading(all[i]);
         if (previous != caption)
             column = 0;
         int header = previous != caption ? int(metrics::list::headerHeight) : 0;
@@ -691,20 +768,22 @@ void DictionaryPanel::redrawChoices(bool atCurrent)
     if (atCurrent)
         for (int p = 0; p < pages.size(); ++p)
             for (int index : pages[p].indices)
-                if (options[index].id == currentId)
+                if (all[index].id == currentId)
                     optionsPage = p;
     optionsPage = qBound(0, optionsPage, int(pages.size()) - 1);
     int y = 0;
     column = 0;
     previous.clear();
     for (int index : pages[optionsPage].indices) {
-        const auto &option = options[index];
+        const auto &option = all[index];
         const auto caption = heading(option);
         if (previous != caption) {
             if (column)
                 y += rowHeight;
             column = 0;
             auto *header = new ui::ListHeader(dropdown);
+            if (option.id.startsWith(QLatin1String("plugin:")))
+                header->setObjectName("rrDictionaryPluginsHeading");
             header->setCaptions(caption);
             header->setGeometry(0, y, width(), metrics::list::headerHeight);
             header->show();
@@ -727,7 +806,14 @@ void DictionaryPanel::redrawChoices(bool atCurrent)
         connect(button, &QPushButton::clicked, this, [this, id = option.id] {
             dropdown->hide();
             refresh();
-            if (chosen)
+            for (const auto &card : cards)
+                if (id == QStringLiteral("plugin:") + card.pluginId) {
+                    showCard(card);
+                    return;
+                }
+            if (showingCard && id == beforeCard.dictionaryId)
+                restoreDefinition();
+            else if (chosen)
                 chosen(id);
         });
     }

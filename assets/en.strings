@@ -330,7 +330,6 @@
 "dictionary_panel.search_in_book" = "Search in book";
 "dictionary_panel.choose_dictionary" = "Choose dictionary";
 "dictionary_panel.close_definition" = "Close definition";
-"dictionary_panel.open_dictionary" = "Look up in dictionary";
 "dictionary_panel.edit_lookup" = "Edit lookup";
 "dictionary_panel.lookup_word" = "Word or phrase to look up";
 "dictionary_panel.update_lookup" = "Update lookup";
@@ -340,6 +339,8 @@
 "dictionary_panel.definition_for" = "Definition for %1";
 /* Arguments: %1 */
 "dictionary_panel.plugin_card_for" = "Plugin card for %1";
+"dictionary_panel.plugins_heading" = "Plugins";
+"dictionary_panel.plugin_answer" = "A plugin has an answer";
 "dictionary_panel.dictionary_unavailable" = "Dictionary unavailable";
 
 /* error */

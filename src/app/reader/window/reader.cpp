@@ -1911,68 +1911,44 @@ void Reader::lookupSelection()
                         guard->page->mapTo(guard, QPoint(0, guard->page->topHeight())));
                 guard->lookupContext = range.context;
                 guard->lookupPosition = range.start;
-                auto *reader = guard.data();
-                if (!reader->plugins || reader->plugins->skipsLookups()) {
-                    reader->openDictionary(query, timing);
-                    return;
-                }
-                // The lookup stays pending until a card, no card or the timeout arrives.
-                reader->lookupPending = true;
-                kobalt::plugins::Lookup lookup;
-                lookup.epoch = epoch;
-                lookup.word = query;
-                lookup.position = kobalt::plugins::position(reader->book->readingActivity());
-                // An endnote or other link target is not reached until the reader stays there.
-                if (!reader->linkHistory.isEmpty())
-                    lookup.position = kobalt::plugins::capAtPage(
-                            lookup.position, reader->linkHistory.first().page + 1);
-                reader->plugins->lookup(
-                        lookup,
-                        [guard, timing](quint64 replied, kobalt::plugins::Card card) {
-                            if (guard)
-                                guard->finishPluginLookup(replied, card, timing);
-                        },
-                        [guard, timing](quint64 replied) {
-                            if (!guard)
-                                return;
-                            guard->setProperty("reader_plugin_replies",
-                                               guard->property("reader_plugin_replies").toInt()
-                                                       + 1);
-                            guard->finishPluginLookup(replied, {}, timing);
-                        });
-                reader->setProperty("reader_plugin_requests",
-                                    reader->property("reader_plugin_requests").toInt() + 1);
-                kobalt::qt::later(reader->services.pluginLookupTimeoutMs, reader,
-                                  [guard, epoch, timing] {
-                                      if (guard)
-                                          guard->finishPluginLookup(epoch, {}, timing);
-                                  });
+                guard->openDictionary(query, timing);
+                if (guard && guard->dictionaryPanel->isVisible())
+                    guard->askPlugins(query);
             },
             true);
 }
 
-void Reader::finishPluginLookup(quint64 epoch, const kobalt::plugins::Card &card,
-                                kobalt::ui::PanelTiming timing)
+// Plugin answers join the open sheet as choices; the definition never waits for them.
+void Reader::askPlugins(const QString &query)
 {
-    if (lookupEpoch != epoch || !lookupPending || closing)
+    dictionaryPanel->clearPluginCards();
+    if (!plugins || plugins->skipsLookups())
         return;
-    // Suspension alone dismisses nothing; end the lookup as closing the sheet does.
-    if (lifecycleHidden || services.suspended()) {
-        dismissDictionary();
-        return;
-    }
-    lookupPending = false;
-    timing.stage("plugins");
-    if (card.isEmpty()) {
-        openDictionary(lookupText, timing);
-        return;
-    }
-    dictionaryPanel->setBookFont(bookFace());
-    dictionaryPanel->openCard(lookupText, card, lookupBounds);
-    timing.finish(dictionaryPanel);
-    syncAnnotationControls();
-    updateOrientationBlock();
-    updateLinkReturn();
+    const quint64 request = ++pluginRequest;
+    const auto epoch = lookupEpoch;
+    kobalt::plugins::Lookup lookup;
+    lookup.epoch = request;
+    lookup.word = query;
+    lookup.position = kobalt::plugins::position(book->readingActivity());
+    // An endnote or other link target is not reached until the reader stays there.
+    if (!linkHistory.isEmpty())
+        lookup.position = kobalt::plugins::capAtPage(lookup.position, linkHistory.first().page + 1);
+    QPointer<Reader> guard(this);
+    plugins->lookup(
+            lookup,
+            [guard, request, epoch](quint64, kobalt::plugins::Card card) {
+                if (!guard || guard->pluginRequest != request || guard->lookupEpoch != epoch
+                    || guard->closing || guard->lifecycleHidden || guard->services.suspended()
+                    || !guard->dictionaryPanel->isVisible())
+                    return;
+                guard->dictionaryPanel->addPluginCard(card);
+            },
+            [guard](quint64) {
+                if (guard)
+                    guard->setProperty("reader_plugin_replies",
+                                       guard->property("reader_plugin_replies").toInt() + 1);
+            });
+    setProperty("reader_plugin_requests", property("reader_plugin_requests").toInt() + 1);
 }
 
 void Reader::openDictionary(const QString &query, kobalt::ui::PanelTiming timing)
