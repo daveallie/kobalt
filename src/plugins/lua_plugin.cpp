@@ -22,6 +22,7 @@ constexpr int logLimit = 1000;
 constexpr int logLines = 20;
 constexpr qint64 sourceLimit = 1024 * 1024;
 constexpr int titleLimit = 200;
+constexpr int descriptionLimit = 500;
 constexpr std::size_t htmlLimit = 64 * 1024;
 constexpr std::size_t stoppedGrowth = 64 * 1024;
 // Registry keys of the hook's error messages; mutable so that they never share an address.
@@ -249,6 +250,14 @@ bool readManifest(const QString &directory, Manifest *out, QString *error)
     manifest.api = 1;
     manifest.name = object.value(QStringLiteral("name")).toString(manifest.id);
     manifest.version = object.value(QStringLiteral("version")).toString();
+    const QJsonValue description = object.value(QStringLiteral("description"));
+    if (!description.isUndefined()
+        && (!description.isString() || description.toString().size() > descriptionLimit)) {
+        *error = QStringLiteral("description of plugin ") + manifest.id
+                + QStringLiteral(" must be text of at most 500 characters");
+        return false;
+    }
+    manifest.description = description.toString();
     manifest.directory = folder.absolutePath();
     if (!QFileInfo(folder.filePath(QStringLiteral("main.lua"))).isFile()) {
         *error = QStringLiteral("plugin ") + manifest.id + QStringLiteral(" has no main.lua");
@@ -256,6 +265,13 @@ bool readManifest(const QString &directory, Manifest *out, QString *error)
     }
     *out = manifest;
     return true;
+}
+
+QString manifestFolderError(const QString &folderName, const Manifest &manifest)
+{
+    if (folderName == manifest.id)
+        return {};
+    return QStringLiteral("folder name must match id '") + manifest.id + QLatin1Char('\'');
 }
 
 LuaPlugin::LuaPlugin(Manifest manifest, Context context, int instructionBudget,

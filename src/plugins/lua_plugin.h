@@ -11,12 +11,14 @@ struct lua_Debug;
 namespace kobalt::plugins {
 struct Manifest
 {
-    QString id, name, version, directory;
+    QString id, name, version, description, directory;
     int api = 0;
 };
 
 // False on a missing or invalid plugin.json or main.lua; `error` says why.
 bool readManifest(const QString &directory, Manifest *out, QString *error);
+// Empty when `folderName` is the manifest's id; otherwise why the folder is skipped.
+QString manifestFolderError(const QString &folderName, const Manifest &manifest);
 
 constexpr int defaultInstructionBudget = 5'000'000;
 constexpr std::size_t defaultMemoryCap = 32 * 1024 * 1024;
@@ -49,6 +51,7 @@ public:
 
     // Allocations refused so far, for tests.
     std::size_t refusedAllocations() const { return memory.refused; }
+
     // While *abort is true, a running hook stops at its next budget check and
     // cannot make allocations larger than 64 KiB, so it fails.
     void setAbort(const std::atomic_bool *abort);

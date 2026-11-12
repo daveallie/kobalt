@@ -146,9 +146,20 @@ void discoveryOrder(Events &events)
     const Card card = answered(*host);
     require(card.title == "a", "The plugin with the first id did not answer first");
     close(host);
-    const QStringList lines = events.take();
-    require(lines.filter("plugin-skipped").filter("third").filter("duplicates").size() == 1,
-            "A duplicate plugin id was not logged with its folder");
+    events.take();
+}
+
+void folderMustMatchId(Events &events)
+{
+    events.take();
+    auto host = open(fixture("mismatch"));
+    require(answered(*host).isEmpty(), "A plugin whose folder differs from its id answered");
+    close(host);
+    require(events.take().filter("plugin-skipped")
+                            .filter("folder name must match id 'right'")
+                            .size()
+                    == 1,
+            "A folder that differs from its id was not logged");
 }
 
 void silentFallsThrough()
@@ -334,6 +345,7 @@ int main(int argc, char **argv)
     mainthread::checkEventsOnly(true);
 
     discoveryOrder(events);
+    folderMustMatchId(events);
     silentFallsThrough();
     noPluginsRepliesNothing();
     folderResolvedOffMainThread();

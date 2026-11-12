@@ -115,7 +115,7 @@ void readFileStaysInFolder()
     require(askHtml(plugin, ".") == "<nil>", "read_file returned the folder itself");
 
     write(folder + "/large.txt", QByteArray(2 * 1024 * 1024, 'x'));
-    LuaPlugin small(manifest(folder), { }, defaultInstructionBudget, 1024 * 1024);
+    LuaPlugin small(manifest(folder), {}, defaultInstructionBudget, 1024 * 1024);
     loaded(small);
     require(askHtml(small, "large.txt").contains("memory limit"),
             "read_file returned a file larger than the memory left");
@@ -209,7 +209,7 @@ void mainLuaLimit()
     QByteArray source = "function before_lookup() return nil end\n";
     source += QByteArray(1024 * 1024, '-');
     write(temporary.path() + "/main.lua", source);
-    LuaPlugin plugin(manifest(temporary.path()), { });
+    LuaPlugin plugin(manifest(temporary.path()), {});
     QString error;
     require(!plugin.load(&error), "A main.lua over 1 MiB loaded");
     require(error.contains("1 MiB"), "The load error does not name the size limit");
@@ -306,7 +306,7 @@ void memoryCap()
     require(askHtml(plugin, "word") == "ok", "The plugin did not recover after large JSON");
 
     std::atomic_bool abort{ false };
-    LuaPlugin stopping(manifest(fixture("memory_cap")), { });
+    LuaPlugin stopping(manifest(fixture("memory_cap")), {});
     stopping.setAbort(&abort);
     loaded(stopping);
     require(askHtml(stopping, "big") == "4000000", "A large allocation failed while running");
@@ -356,7 +356,7 @@ void patternSteps()
 
 void cLibraryLimits()
 {
-    LuaPlugin plugin(manifest(fixture("c_limits")), { });
+    LuaPlugin plugin(manifest(fixture("c_limits")), {});
     loaded(plugin);
     QElapsedTimer timer;
     timer.start();
@@ -383,7 +383,7 @@ void cLibraryLimits()
 
 void cardLimits()
 {
-    LuaPlugin plugin(manifest(fixture("card_limits")), { });
+    LuaPlugin plugin(manifest(fixture("card_limits")), {});
     loaded(plugin);
     bool ok = false;
     const auto largest = ask(plugin, "largest", &ok);
@@ -405,7 +405,7 @@ void logRateLimit()
         if (event.value("event").toString() == "plugin-log")
             lines.append(event.value("message").toString());
     });
-    LuaPlugin plugin(manifest(fixture("log")), { });
+    LuaPlugin plugin(manifest(fixture("log")), {});
     loaded(plugin);
     for (int call = 0; call < 2; ++call) {
         lines.clear();
@@ -414,7 +414,7 @@ void logRateLimit()
         require(lines.at(19).endsWith("line 20") && lines.at(20).endsWith("suppressed"),
                 "The log notice is missing or out of place");
     }
-    kobalt::setDiagnosticObserver({ });
+    kobalt::setDiagnosticObserver({});
 }
 
 // `word` "full" fills the heap to the cap before the stop, and "xfull" also
@@ -422,7 +422,7 @@ void logRateLimit()
 void stopUnwindsQuickly(const char *word)
 {
     std::atomic_bool abort{ false };
-    LuaPlugin plugin(manifest(fixture("stop")), { });
+    LuaPlugin plugin(manifest(fixture("stop")), {});
     plugin.setAbort(&abort);
     loaded(plugin);
     QElapsedTimer timer;
@@ -441,7 +441,7 @@ void stopUnwindsQuickly(const char *word)
     ask(plugin, word, &ok, &error);
     const qint64 elapsed = timer.isValid() ? timer.elapsed() : -1;
     const std::size_t refused = plugin.refusedAllocations() - refusedBefore;
-    kobalt::setDiagnosticObserver({ });
+    kobalt::setDiagnosticObserver({});
     if (elapsed < 0 || !error.contains("was stopped"))
         std::fprintf(stderr, "%s: %s\n", word, qPrintable(error));
     require(elapsed >= 0, "The stop fixture never became ready");
@@ -457,7 +457,7 @@ void stopUnwindsQuickly(const char *word)
 
 void xpcallUnderBudget()
 {
-    LuaPlugin plugin(manifest(fixture("xpcall")), { });
+    LuaPlugin plugin(manifest(fixture("xpcall")), {});
     loaded(plugin);
     require(askHtml(plugin, "ok") == "true|3|two", "xpcall lost its results");
     require(askHtml(plugin, "error") == "false|handled boom", "xpcall did not run its handler");
@@ -473,7 +473,7 @@ void xpcallUnderBudget()
     require(timer.elapsed() < 1000, "The budget did not stop an xpcall handler within a second");
 
     std::atomic_bool abort{ false };
-    LuaPlugin stopping(manifest(fixture("xpcall")), { });
+    LuaPlugin stopping(manifest(fixture("xpcall")), {});
     stopping.setAbort(&abort);
     loaded(stopping);
     kobalt::setDiagnosticObserver([&](const QJsonObject &event) {
@@ -483,7 +483,7 @@ void xpcallUnderBudget()
         }
     });
     ask(stopping, "stop", &ok, &error);
-    kobalt::setDiagnosticObserver({ });
+    kobalt::setDiagnosticObserver({});
     require(!ok && error.contains("was stopped"), "A stop did not end an xpcall handler");
     require(timer.elapsed() < 500, "A stop did not end an xpcall handler promptly");
 }
@@ -494,6 +494,19 @@ void manifestValidation()
     require(valid.id == "echo" && valid.name == "echo" && valid.version == "1" && valid.api == 1,
             "The manifest fields are wrong");
     require(QDir(valid.directory) == QDir(fixture("echo")), "The manifest folder is wrong");
+    require(valid.description.isEmpty(), "A missing description was not empty");
+    require(manifest(fixture("described")).description == "Shows a test card.",
+            "The description was not read");
+    {
+        QString error;
+        Manifest result;
+        require(!readManifest(fixture("long_description"), &result, &error)
+                        && error.startsWith("description"),
+                "A description over 500 characters was accepted");
+    }
+    require(manifestFolderError("echo", valid).isEmpty(), "A matching folder was refused");
+    require(manifestFolderError("other", valid) == "folder name must match id 'echo'",
+            "A folder named differently from its id was accepted");
     for (const char *name :
          { "api_two", "missing_id", "bad_id", "invalid_json", "missing_main", "absent" }) {
         QString error;

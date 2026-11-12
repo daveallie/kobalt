@@ -4,7 +4,7 @@ Kobalt loads plugins written in Lua 5.4. A plugin answers hooks of the reader. T
 
 ## Folders
 
-Each plugin is a folder of its own that holds `plugin.json` and `main.lua`.
+Each plugin is a folder of its own that holds `plugin.json` and `main.lua`. The folder's name is the plugin's `id`: Kobalt skips and logs a folder whose name differs from the `id` in its `plugin.json`.
 
 | Platform | Plugin folder |
 | --- | --- |
@@ -17,12 +17,14 @@ Kobalt reads the folders when the reader opens a book, on the plugin thread. A p
 ## `plugin.json`
 
 ```json
-{ "id": "xray", "name": "X-Ray", "version": "0.1", "api": 1 }
+{ "id": "xray", "name": "X-Ray", "version": "0.1", "api": 1,
+  "description": "Shows who a character is, up to your reading position." }
 ```
 
-- `id` is required and uses only the characters `A-Z`, `a-z`, `0-9`, `.`, `_` and `-`. It cannot be `.` or `..`. Plugins run in order of `id`, and when several answer a lookup the first one wins. When two folders have the same `id`, Kobalt loads the first folder by name and skips and logs the other.
+- `id` is required and uses only the characters `A-Z`, `a-z`, `0-9`, `.`, `_` and `-`. It cannot be `.` or `..`. It must equal the folder's name. Plugins run in order of `id`, and when several answer a lookup the first one wins.
 - `api` is required and must be `1`. Kobalt skips and logs a plugin with any other value, an invalid manifest or no `main.lua`.
 - `name` defaults to the `id`. `version` is informational.
+- `description` is optional text of at most 500 characters. Kobalt skips and logs a plugin with a longer description or one that is not text.
 - `plugin.json` and `main.lua` may each be at most 1 MiB; Kobalt skips and logs a larger one.
 
 ## Hooks

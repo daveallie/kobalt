@@ -6,7 +6,6 @@
 
 #include <QDir>
 #include <QMutex>
-#include <QSet>
 #include <algorithm>
 #include <atomic>
 #include <memory>
@@ -85,7 +84,6 @@ void PluginHost::Worker::open()
     }
     QDir root(folder);
     std::vector<Manifest> manifests;
-    QSet<QString> ids;
     const auto folders = root.entryList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
     for (const QString &folder : folders) {
         const QString path = root.filePath(folder);
@@ -95,13 +93,11 @@ void PluginHost::Worker::open()
             skipped(path, error);
             continue;
         }
-        if (ids.contains(manifest.id)) {
-            skipped(path,
-                    QStringLiteral("plugin ") + manifest.id
-                            + QStringLiteral(" duplicates an earlier folder's id"));
+        const QString mismatch = manifestFolderError(folder, manifest);
+        if (!mismatch.isEmpty()) {
+            skipped(path, mismatch);
             continue;
         }
-        ids.insert(manifest.id);
         manifests.push_back(std::move(manifest));
     }
     std::sort(manifests.begin(), manifests.end(),
