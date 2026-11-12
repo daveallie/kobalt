@@ -54,7 +54,7 @@ public:
 
 // Runs on the plugin thread: getExternalFilesDir creates the folder when it is
 // missing. Empty when shared storage is unavailable, which leaves plugins off.
-QString pluginDirectory()
+QString externalFilesFolder(const QString &name)
 {
     const QJniObject application = QNativeInterface::QAndroidApplication::context();
     const auto folder = application.callObjectMethod("getExternalFilesDir",
@@ -62,9 +62,9 @@ QString pluginDirectory()
                                                      static_cast<jstring>(nullptr));
     QJniEnvironment env;
     if (env.checkAndClearExceptions() || !folder.isValid())
-        return { };
+        return {};
     const auto path = folder.callObjectMethod("getAbsolutePath", "()Ljava/lang/String;").toString();
-    return path.isEmpty() ? QString() : path + "/plugins";
+    return path.isEmpty() ? QString() : path + '/' + name;
 }
 } // namespace
 
@@ -88,7 +88,8 @@ ReaderHostServices readerHostServices()
         result.deviceName = QStringLiteral("Android");
     result.colorDisplay = [] { return true; };
     result.systemRotation = true;
-    result.pluginDirectory = pluginDirectory;
+    result.pluginDirectory = [] { return externalFilesFolder(QStringLiteral("plugins")); };
+    result.pluginDataDirectory = [] { return externalFilesFolder(QStringLiteral("plugin-data")); };
     // Android imports books, so no sidecar sits beside them.
     result.bookSidecars = false;
     result.browserAvailable = [] { return true; };

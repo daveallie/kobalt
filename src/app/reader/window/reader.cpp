@@ -533,6 +533,8 @@ void Reader::sleepReader()
     if (imageViewer && imageViewer->isVisible())
         imageViewer->closeImage();
     book->retryFailedReadingSave();
+    if (plugins)
+        plugins->flush();
     if (orientation) {
         orientation->freeze();
     }

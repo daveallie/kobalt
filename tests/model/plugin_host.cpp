@@ -6,7 +6,10 @@
 #include "support/qt_compat.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QElapsedTimer>
+#include <QFile>
+#include <QFileInfo>
 #include <QMutex>
 #include <QStringList>
 #include <QTemporaryDir>
@@ -66,14 +69,16 @@ void inEvent(Work work)
     require(waitFor([&] { return done; }), "A queued test step never ran");
 }
 
-std::unique_ptr<PluginHost> open(PluginHost::Directory directory, int joinLimitMs = 2000)
+std::unique_ptr<PluginHost> open(PluginHost::Directory directory, int joinLimitMs = 2000,
+                                 QString dataRoot = {}, QString bookKey = QStringLiteral("key"))
 {
     std::unique_ptr<PluginHost> host;
     inEvent([&] {
-        host.reset(new PluginHost(std::move(directory), Context(),
-                                  { QStringLiteral("id"), QStringLiteral("Wolf Hall"),
-                                    QStringLiteral("en"), QStringLiteral("key") },
-                                  joinLimitMs));
+        host.reset(new PluginHost(
+                std::move(directory), [dataRoot] { return dataRoot; }, Context(),
+                { QStringLiteral("id"), QStringLiteral("Wolf Hall"), QStringLiteral("en"),
+                  bookKey },
+                joinLimitMs));
     });
     return host;
 }
@@ -81,6 +86,12 @@ std::unique_ptr<PluginHost> open(PluginHost::Directory directory, int joinLimitM
 std::unique_ptr<PluginHost> open(const QString &directory, int joinLimitMs = 2000)
 {
     return open([directory] { return directory; }, joinLimitMs);
+}
+
+std::unique_ptr<PluginHost> openWithData(const QString &directory, const QString &dataRoot,
+                                         const QString &bookKey = QStringLiteral("key"))
+{
+    return open([directory] { return directory; }, 2000, dataRoot, bookKey);
 }
 
 void close(std::unique_ptr<PluginHost> &host)
@@ -306,6 +317,54 @@ void hungCloseDetaches(Events &events)
     close(after);
 }
 
+void storePersistsAcrossBooks()
+{
+    QTemporaryDir data;
+    auto host = openWithData(fixture("remember"), data.path());
+    require(answered(*host).title == "book 1 global 1", "The first lookup was not counted");
+    require(answered(*host).title == "book 2 global 2", "The second lookup was not counted");
+    close(host);
+    host = openWithData(fixture("remember"), data.path());
+    require(answered(*host).title == "book 3 global 3", "Plugin data did not survive closing");
+    close(host);
+    host = openWithData(fixture("remember"), data.path(), QStringLiteral("other"));
+    require(answered(*host).title == "book 1 global 4",
+            "Another book shared this book's data or lost the global data");
+    close(host);
+}
+
+void sleepFlushes()
+{
+    QTemporaryDir data;
+    const QString global = data.path() + "/remember/global.json";
+    auto host = openWithData(fixture("remember"), data.path());
+    require(answered(*host).title == "book 1 global 1", "The lookup was not counted");
+    inEvent([&] { host->flush(); });
+    require(waitFor([&] { return QFile::exists(global); }), "Sleep did not write the store");
+    const QDateTime old = QDateTime::fromSecsSinceEpoch(1'000'000'000);
+    {
+        QFile file(global);
+        require(file.open(QIODevice::ReadWrite)
+                        && file.setFileTime(old, QFileDevice::FileModificationTime),
+                "The modification time was not set");
+    }
+    inEvent([&] { host->flush(); });
+    close(host);
+    require(QFileInfo(global).lastModified() == old,
+            "A sleep or close without changes rewrote the store");
+}
+
+void noDataRootStillAnswers(Events &events)
+{
+    events.take();
+    auto host = openWithData(fixture("remember"), QString());
+    require(answered(*host).title == "book 1 global 1", "A plugin without data did not answer");
+    require(answered(*host).title == "book 1 global 1", "A plugin without data kept values");
+    close(host);
+    require(events.take().filter("plugin-failed").isEmpty(),
+            "A refused store write counted as a plugin failure");
+}
+
 void replyOnMainThread()
 {
     auto host = open(fixture("single"));
@@ -355,6 +414,9 @@ int main(int argc, char **argv)
     queuedBehindSlowOpen();
     destroyWhileRunning(events);
     replyOnMainThread();
+    storePersistsAcrossBooks();
+    sleepFlushes();
+    noDataRootStillAnswers(events);
     closeRunsBookClosed(events);
     hungCloseDetaches(events);
 

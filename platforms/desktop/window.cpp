@@ -281,6 +281,9 @@ Window::Window(storage::Paths paths, EngineFontInputs fonts, QString placeholder
                       return reader::pickerAnnotationExporter(reader, this);
                   };
                   services.pluginDirectory = [folder = profile + "/plugins"] { return folder; };
+                  services.pluginDataDirectory = [folder = profile + "/plugin-data"] {
+                      return folder;
+                  };
                   services.devicePreview = [this] { return screenPreset != 0; };
                   services.readerStandbySupported = screenPreset != 0;
                   // An emulated sleep or power-off suspends the reader as on Kobo.

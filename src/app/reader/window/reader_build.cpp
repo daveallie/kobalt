@@ -493,8 +493,9 @@ void Reader::buildReadingPage()
         about.identity = book->identity();
         about.title = session->title();
         about.language = session->state().value("language").toString();
-        plugins = std::make_unique<kobalt::plugins::PluginHost>(services.pluginDirectory, context,
-                                                                about);
+        about.key = BookmarkStore::bookKey(book->identity(), book->fingerprint());
+        plugins = std::make_unique<kobalt::plugins::PluginHost>(
+                services.pluginDirectory, services.pluginDataDirectory, context, about);
     }
     dictionaryPanel->chosen = [this](const QString &id) {
         if (lifecycleHidden || services.suspended() || closing)

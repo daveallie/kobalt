@@ -101,6 +101,9 @@ struct ReaderHostServices
     // Optional resolver of the Lua plugin folder. It runs on the plugin thread,
     // so it may touch storage; an unset resolver or an empty result disables plugins.
     std::function<QString()> pluginDirectory;
+    // Optional resolver of the folder that holds plugin data, run on the plugin
+    // thread; an unset resolver or an empty result means plugins save nothing.
+    std::function<QString()> pluginDataDirectory;
     // False where books have no files beside them, so plugins cannot read sidecars.
     bool bookSidecars = true;
     // How long a lookup waits for a plugin card before the dictionary opens; tests shorten it.

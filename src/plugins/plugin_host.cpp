@@ -1,5 +1,7 @@
 #include "plugin_host.h"
 
+#include "plugin_store.h"
+
 #include "support/diagnostics.h"
 #include "support/main_thread.h"
 #include "support/qt_compat.h"
@@ -39,8 +41,10 @@ struct PluginHost::Shared
 class PluginHost::Worker : public QObject
 {
 public:
-    Worker(Directory directory, Context context, Book book, std::shared_ptr<Shared> shared)
+    Worker(Directory directory, Directory dataDirectory, Context context, Book book,
+           std::shared_ptr<Shared> shared)
         : directory(std::move(directory)),
+          dataDirectory(std::move(dataDirectory)),
           context(std::move(context)),
           book(std::move(book)),
           shared(std::move(shared)),
@@ -53,10 +57,13 @@ public:
     void open();
     Card lookup(const Lookup &lookup);
     void close();
+    void flush();
 
 private:
     struct Entry
     {
+        // Declared first, so it outlives the plugin that points at it.
+        std::unique_ptr<PluginStore> store;
         std::unique_ptr<LuaPlugin> plugin;
         int failures = 0;
     };
@@ -65,8 +72,9 @@ private:
 
     void fail(Entry &entry, const QString &error);
     void publish();
+    void save(Entry &entry);
 
-    Directory directory;
+    Directory directory, dataDirectory;
     Context context;
     Book book;
     std::shared_ptr<Shared> shared;
@@ -103,12 +111,16 @@ void PluginHost::Worker::open()
     std::sort(manifests.begin(), manifests.end(),
               [](const Manifest &a, const Manifest &b) { return a.id < b.id; });
 
+    const QString data = dataDirectory ? dataDirectory() : QString();
     for (auto &manifest : manifests) {
         if (stopped())
             return;
         const QString path = manifest.directory;
         Entry entry;
+        entry.store.reset(new PluginStore(data, manifest.id, book.key));
+        entry.store->load();
         entry.plugin.reset(new LuaPlugin(std::move(manifest), context));
+        entry.plugin->setStore(entry.store.get());
         entry.plugin->setAbort(abort);
         QString error;
         if (!entry.plugin->load(&error)) {
@@ -164,7 +176,24 @@ void PluginHost::Worker::close()
         if (!entry.plugin->bookClosed(&error))
             fail(entry, error);
     }
+    for (auto &entry : plugins)
+        save(entry);
     plugins.clear();
+}
+
+void PluginHost::Worker::flush()
+{
+    for (auto &entry : plugins)
+        save(entry);
+}
+
+void PluginHost::Worker::save(Entry &entry)
+{
+    QString error;
+    if (!entry.store->save(&error))
+        diagnostic("plugin-data-save-failed",
+                   { { "plugin", entry.plugin->manifest().id }, { "message", error } },
+                   DiagnosticSeverity::Warning);
 }
 
 void PluginHost::Worker::fail(Entry &entry, const QString &error)
@@ -180,8 +209,8 @@ void PluginHost::Worker::fail(Entry &entry, const QString &error)
     }
 }
 
-PluginHost::PluginHost(Directory pluginDirectory, Context context, Book book, int joinLimitMs,
-                       QObject *parent)
+PluginHost::PluginHost(Directory pluginDirectory, Directory dataDirectory, Context context,
+                       Book book, int joinLimitMs, QObject *parent)
     : QObject(parent), shared(std::make_shared<Shared>()), joinLimitMs(joinLimitMs)
 {
     shared->host = this;
@@ -193,7 +222,8 @@ PluginHost::PluginHost(Directory pluginDirectory, Context context, Book book, in
         shared->opened.store(true, std::memory_order_release);
         return;
     }
-    worker = new Worker(std::move(pluginDirectory), std::move(context), std::move(book), shared);
+    worker = new Worker(std::move(pluginDirectory), std::move(dataDirectory), std::move(context),
+                        std::move(book), shared);
     thread = new QThread;
     thread->setObjectName(QStringLiteral("plugins"));
     worker->moveToThread(thread);
@@ -250,6 +280,14 @@ PluginHost::~PluginHost()
     }
     shared->abort = true;
     diagnostic("plugin-hang", { { "waited_ms", joinLimitMs } }, DiagnosticSeverity::Warning);
+}
+
+void PluginHost::flush()
+{
+    if (!worker || closing)
+        return;
+    Worker *target = worker;
+    qt::invoke(worker, [target] { target->flush(); }, Qt::QueuedConnection);
 }
 
 int PluginHost::detachedThreads()

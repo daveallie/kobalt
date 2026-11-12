@@ -1,6 +1,6 @@
 # Lua plugins
 
-Kobalt loads plugins written in Lua 5.4. A plugin answers hooks of the reader. The only hook that changes what the reader does is `before_lookup`, which can replace a dictionary lookup with a card. Kobalt ships no plugins; installing one means copying its folder, and removing the folder removes the plugin. There is no plugin manager, settings page or persistent plugin state. [kobalt-plugins](https://github.com/daveallie/kobalt-plugins) holds an example, the X-Ray plugin, which shows who a character is from a sidecar file.
+Kobalt loads plugins written in Lua 5.4. A plugin answers hooks of the reader. The only hook that changes what the reader does is `before_lookup`, which can replace a dictionary lookup with a card. Kobalt ships no plugins; installing one means copying its folder, and removing the folder removes the plugin. There is no plugin manager or settings page. [kobalt-plugins](https://github.com/daveallie/kobalt-plugins) holds an example, the X-Ray plugin, which shows who a character is from a sidecar file.
 
 ## Folders
 
@@ -64,7 +64,28 @@ A card needs a non-empty string `title` and `html`. `footer` is optional. `title
 | `kobalt.read_file(relative_path)` | Reads a file inside the plugin's own folder. It returns `nil` for absolute paths, paths that leave the folder and missing files. |
 | `kobalt.log(message)` | Writes the message, cut to 1000 characters, to the diagnostic log with the plugin id. Each hook call logs at most 20 lines; the next call logs one line that says further lines were suppressed, and drops the rest. |
 
-A file larger than the memory the plugin has left returns `nil` and a message, without being read. Plugins cannot write files, use the network or read other folders.
+A file larger than the memory the plugin has left returns `nil` and a message, without being read. Plugins cannot write files, use the network or read other folders; they save data only through the stores below.
+
+## Saved data
+
+`kobalt.store` holds data shared by every book and `kobalt.book_store` holds data for the open book. Both have the same two functions:
+
+| Function | Behavior |
+| --- | --- |
+| `get(key)` | Returns the stored value or `nil`. A table comes back as a fresh copy: changing it changes nothing until `set`. |
+| `set(key, value)` | Stores the value and returns `true`. `set(key, nil)` removes the key. It returns `nil, message` for a key that is empty or longer than 256 bytes, a value that is not JSON, a value that would take the store past its limit, and when Kobalt has no plugin data folder. A failed `set` changes nothing. |
+
+Values are `nil`, booleans, numbers, strings and tables. A table is either a list with the keys 1 to n and no holes, or has only string keys. Functions, tables that contain themselves, numbers that are not finite and integers beyond 2^53 are refused. A store may hold 256 KiB of shared data and 64 KiB for each book; the size counts each key's UTF-8 bytes and its value as compact JSON.
+
+Reads come from memory. Kobalt loads both stores when the book opens, before `main.lua` runs, and writes those that changed when the book closes, after `book_closed`, and when the device goes to sleep. Writes run on the plugin thread and replace each file whole. The data lives outside the plugin folder, so replacing the folder for an upgrade keeps it, and removing the folder leaves it in place:
+
+| Platform | Plugin data folder |
+| --- | --- |
+| Kobo | `.adds/kobalt/plugin-data/<id>/` on user storage |
+| Android | `plugin-data/<id>/` in the app's external files folder |
+| Desktop | `plugin-data/<id>/` in the profile folder |
+
+The shared store is `global.json` and each book's store is `books/<SHA-256 of the book key>.json`, using the key that bookmarks and annotations use, so a sideloaded book keeps its data when its file moves. [Storage compatibility](storage.md#plugin-data) describes the file format.
 
 ## Sandbox
 

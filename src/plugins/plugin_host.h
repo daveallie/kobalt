@@ -24,8 +24,9 @@ public:
     // Runs on the plugin thread; an empty folder means no plugins.
     using Directory = std::function<QString()>;
 
-    PluginHost(Directory pluginDirectory, Context context, Book book, int joinLimitMs = 2000,
-               QObject *parent = nullptr);
+    // `dataDirectory` holds every plugin's saved data; empty means none is saved.
+    PluginHost(Directory pluginDirectory, Directory dataDirectory, Context context, Book book,
+               int joinLimitMs = 2000, QObject *parent = nullptr);
     // Stops a running hook, runs book_closed and waits up to the join limit
     // for the thread; a thread still running then is left to finish on its
     // own. Call it only where blocking the main thread is allowed.
@@ -39,6 +40,8 @@ public:
     // True once the plugins have opened and none can answer a lookup, so a
     // lookup need not wait for the plugin thread. Any thread.
     bool skipsLookups() const;
+    // Main thread. Queues a save of the plugin data that changed and never waits.
+    void flush();
     // Plugin threads that outlived their host and still run. Any thread.
     static int detachedThreads();
 
