@@ -91,6 +91,9 @@ private:
     static int readFile(lua_State *state);
     static int readSidecar(lua_State *state);
     static int log(lua_State *state);
+    static int requireModule(lua_State *state);
+    // Pushes the module's chunk, or an error message and returns false.
+    static bool loadModule(lua_State *state, const QString &name);
     static LuaPlugin *owner(lua_State *state);
 
     Manifest pluginManifest;

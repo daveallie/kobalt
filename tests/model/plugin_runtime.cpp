@@ -488,6 +488,71 @@ void xpcallUnderBudget()
     require(timer.elapsed() < 500, "A stop did not end an xpcall handler promptly");
 }
 
+void requireLoadsModules()
+{
+    LuaPlugin plugin(manifest(fixture("modules")), {});
+    loaded(plugin);
+    require(askHtml(plugin, "upper") == "A", "A nested module was not loaded");
+    require(askHtml(plugin, "once") == "1:true:true",
+            "A module was not loaded once and cached as true");
+}
+
+void requireRejectsBadNames()
+{
+    LuaPlugin plugin(manifest(fixture("modules")), {});
+    loaded(plugin);
+    const QStringList errors = askHtml(plugin, "bad").split('|');
+    require(errors.size() == 8, "Not every bad name was tried");
+    for (const QString &error : errors)
+        require(error.contains("invalid module name"), "A bad module name was accepted");
+}
+
+void requireMissingModule()
+{
+    LuaPlugin plugin(manifest(fixture("modules")), {});
+    loaded(plugin);
+    require(askHtml(plugin, "missing").contains("module 'nope' not found"),
+            "A missing module did not name itself");
+}
+
+void requireCycle()
+{
+    LuaPlugin plugin(manifest(fixture("modules")), {});
+    loaded(plugin);
+    require(askHtml(plugin, "cycle").contains("circular require"),
+            "A circular require was not refused");
+}
+
+void requireUnderBudget()
+{
+    QTemporaryDir temporary;
+    require(temporary.isValid(), "No temporary folder");
+    require(QFile::copy(fixture("modules/plugin.json"), temporary.path() + "/plugin.json")
+                    && QFile::copy(fixture("modules/spin.lua"), temporary.path() + "/spin.lua"),
+            "The fixture was not copied");
+    write(temporary.path() + "/main.lua", "require(\"spin\")\n");
+    LuaPlugin plugin(manifest(temporary.path()), {});
+    QElapsedTimer timer;
+    timer.start();
+    QString error;
+    require(!plugin.load(&error), "An endless module loaded");
+    require(error.contains("budget"), "The module's loop did not stop on the budget");
+    require(timer.elapsed() < 2000, "The module's loop did not stop promptly");
+}
+
+void requireSizeLimit()
+{
+    QTemporaryDir temporary;
+    require(temporary.isValid(), "No temporary folder");
+    require(QFile::copy(fixture("modules/plugin.json"), temporary.path() + "/plugin.json")
+                    && QFile::copy(fixture("modules/main.lua"), temporary.path() + "/main.lua"),
+            "The fixture was not copied");
+    write(temporary.path() + "/big.lua", QByteArray(1024 * 1024 + 1, ' '));
+    LuaPlugin plugin(manifest(temporary.path()), {});
+    loaded(plugin);
+    require(askHtml(plugin, "big").contains("too large"), "A module over 1 MiB was loaded");
+}
+
 void manifestValidation()
 {
     const auto valid = manifest(fixture("echo"));
@@ -563,5 +628,11 @@ int main(int argc, char **argv)
     stopUnwindsQuickly("xfull");
     xpcallUnderBudget();
     manifestValidation();
+    requireLoadsModules();
+    requireRejectsBadNames();
+    requireMissingModule();
+    requireCycle();
+    requireUnderBudget();
+    requireSizeLimit();
     puts("PASS: Lua plugins run in a sandbox");
 }

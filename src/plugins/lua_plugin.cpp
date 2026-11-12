@@ -26,7 +26,7 @@ constexpr int descriptionLimit = 500;
 constexpr std::size_t htmlLimit = 64 * 1024;
 constexpr std::size_t stoppedGrowth = 64 * 1024;
 // Registry keys of the hook's error messages; mutable so that they never share an address.
-char stoppedKey, budgetKey;
+char stoppedKey, budgetKey, modulesKey, loadingKey;
 
 QString text(lua_State *state, int index)
 {
@@ -453,6 +453,76 @@ int LuaPlugin::readFile(lua_State *state)
     return pushFile(state, path);
 }
 
+bool LuaPlugin::loadModule(lua_State *state, const QString &name)
+{
+    const LuaPlugin *plugin = owner(state);
+    const Unenforced unenforced(state);
+    static const QRegularExpression valid(QStringLiteral("^[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*\\z"));
+    if (!valid.match(name).hasMatch()) {
+        push(state, QStringLiteral("invalid module name '") + name + QLatin1Char('\''));
+        return false;
+    }
+    const QString relative =
+            QString(name).replace(QLatin1Char('.'), QLatin1Char('/')) + QStringLiteral(".lua");
+    const QFileInfo info(QDir(plugin->root).filePath(relative));
+    const QString canonical = info.canonicalFilePath();
+    QByteArray source;
+    const Read read = info.isFile() && canonical.startsWith(plugin->root + QLatin1Char('/'))
+            ? readBytes(canonical, sourceLimit, &source)
+            : Read::Missing;
+    if (read != Read::Ok) {
+        push(state,
+             QStringLiteral("module '") + name
+                     + (read == Read::TooLarge ? QStringLiteral("' is too large")
+                                               : QStringLiteral("' not found")));
+        return false;
+    }
+    const QByteArray chunk = "@" + relative.toUtf8();
+    return luaL_loadbufferx(state, source.constData(), size_t(source.size()), chunk.constData(),
+                            "t")
+            == LUA_OK;
+}
+
+// Loads <name>.lua from the plugin folder once; no C++ object may live across lua_error.
+int LuaPlugin::requireModule(lua_State *state)
+{
+    luaL_checkstring(state, 1);
+    lua_settop(state, 1);
+    lua_rawgetp(state, LUA_REGISTRYINDEX, &modulesKey);
+    lua_pushvalue(state, 1);
+    const int cached = lua_rawget(state, 2);
+    if (cached == LUA_TLIGHTUSERDATA) {
+        lua_pushliteral(state, "circular require of module '");
+        lua_pushvalue(state, 1);
+        lua_pushliteral(state, "'");
+        lua_concat(state, 3);
+        return lua_error(state);
+    }
+    if (cached != LUA_TNIL)
+        return 1;
+    lua_pop(state, 1);
+    if (!loadModule(state, text(state, 1)))
+        return lua_error(state);
+    lua_pushvalue(state, 1);
+    lua_pushlightuserdata(state, &loadingKey);
+    lua_rawset(state, 2);
+    lua_pushvalue(state, 1);
+    if (lua_pcall(state, 1, 1, 0) != LUA_OK) {
+        lua_pushvalue(state, 1);
+        lua_pushnil(state);
+        lua_rawset(state, 2);
+        return lua_error(state);
+    }
+    if (lua_isnil(state, -1)) {
+        lua_pop(state, 1);
+        lua_pushboolean(state, 1);
+    }
+    lua_pushvalue(state, 1);
+    lua_pushvalue(state, -2);
+    lua_rawset(state, 2);
+    return 1;
+}
+
 int LuaPlugin::readSidecar(lua_State *state)
 {
     luaL_checkstring(state, 1);
@@ -531,6 +601,10 @@ bool LuaPlugin::load(QString *error)
     lua_pushcfunction(state, log);
     lua_setfield(state, -2, "log");
     lua_setglobal(state, "kobalt");
+    lua_newtable(state);
+    lua_rawsetp(state, LUA_REGISTRYINDEX, &modulesKey);
+    lua_pushcfunction(state, requireModule);
+    lua_setglobal(state, "require");
 
     if (luaL_loadbufferx(state, source.constData(), size_t(source.size()), "@main.lua", "t")
         != LUA_OK) {

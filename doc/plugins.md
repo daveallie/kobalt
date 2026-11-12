@@ -68,7 +68,11 @@ A file larger than the memory the plugin has left returns `nil` and a message, w
 
 ## Sandbox
 
-Each plugin has its own Lua state with `base`, `string`, `table`, `math` and `utf8`. These are absent: `io`, `os`, `package`, `debug`, `require`, `dofile`, `loadfile` and `print`. `load` accepts text chunks only. `xpcall` calls its message handler after the protected call has unwound, under the instruction budget, so the handler sees the error value but not the stack where it was raised; when the handler itself fails, `xpcall` returns `false` and the handler's error. `setmetatable` refuses a metatable with `__gc`, because finalizers run outside the instruction budget. Weak-keyed tables (`__mode` with `k`) keep their keys as strong references, because collecting weak keys can take the garbage collector time that grows with the square of the tables; weak values are still collected. Use `kobalt.log` instead of `print`.
+Each plugin has its own Lua state with `base`, `string`, `table`, `math` and `utf8`. These are absent: `io`, `os`, `package`, `debug`, `dofile`, `loadfile` and `print`. `load` accepts text chunks only. `xpcall` calls its message handler after the protected call has unwound, under the instruction budget, so the handler sees the error value but not the stack where it was raised; when the handler itself fails, `xpcall` returns `false` and the handler's error. `setmetatable` refuses a metatable with `__gc`, because finalizers run outside the instruction budget. Weak-keyed tables (`__mode` with `k`) keep their keys as strong references, because collecting weak keys can take the garbage collector time that grows with the square of the tables; weak values are still collected. Use `kobalt.log` instead of `print`.
+
+## Modules
+
+`require(name)` loads a module from the plugin's own folder: `require("history.format")` loads `history/format.lua`. A name is one or more parts of letters, digits, `_` and `-`, joined by single dots; any other name raises an error. A module runs once, as a text chunk with the plugin's globals, and `require` returns its result, or `true` when it returns nothing, on every later call. A missing module, a module larger than 1 MiB and a module that requires itself, directly or through others, raise errors. Modules count toward the instruction budget of the hook that loads them and toward the plugin's memory. A plugin cannot load another plugin's modules.
 
 ## Budgets and failures
 

@@ -1,4 +1,4 @@
-for _, name in ipairs({ "io", "os", "package", "debug", "dofile", "loadfile", "require", "print" }) do
+for _, name in ipairs({ "io", "os", "package", "debug", "dofile", "loadfile", "print" }) do
     assert(_G[name] == nil, name .. " is visible")
 end
 local chunk, message = load(string.dump(function() return 1 end))
@@ -14,3 +14,4 @@ assert(load("return x", "env", "t", { x = 3 })() == 3, "the environment argument
 function before_lookup(ctx)
     return { title = "sandbox", html = "ok" }
 end
+assert(type(require) == "function", "require is missing")
